@@ -1,0 +1,311 @@
+2025-10-06 14:03:01 [INFO] Server running on port 3000
+2025-10-06 14:03:01 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:01 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:01 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:05 [INFO] Server running on port 3000
+2025-10-06 14:03:05 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:05 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:05 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:14 [INFO] Server running on port 3000
+2025-10-06 14:03:14 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:14 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:14 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:18 [INFO] Server running on port 3000
+2025-10-06 14:03:18 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:18 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:18 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:22 [INFO] Server running on port 3000
+2025-10-06 14:03:22 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:22 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:22 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:25 [INFO] Server running on port 3000
+2025-10-06 14:03:25 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:25 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:25 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:30 [INFO] Server running on port 3000
+2025-10-06 14:03:30 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:30 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:30 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:34 [INFO] Server running on port 3000
+2025-10-06 14:03:34 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:34 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:34 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:38 [INFO] Server running on port 3000
+2025-10-06 14:03:38 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:38 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:38 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:42 [INFO] Server running on port 3000
+2025-10-06 14:03:42 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:42 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:42 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:47 [INFO] Server running on port 3000
+2025-10-06 14:03:47 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:47 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:47 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:50 [INFO] Server running on port 3000
+2025-10-06 14:03:50 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:50 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:50 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:54 [INFO] Server running on port 3000
+2025-10-06 14:03:54 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:54 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:54 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:03:58 [INFO] Server running on port 3000
+2025-10-06 14:03:58 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:03:58 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:03:58 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:02 [INFO] Server running on port 3000
+2025-10-06 14:04:02 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:02 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:02 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:27 [INFO] Server running on port 3000
+2025-10-06 14:04:27 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:27 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:27 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:30 [INFO] Server running on port 3000
+2025-10-06 14:04:30 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:30 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:30 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:34 [INFO] Server running on port 3000
+2025-10-06 14:04:34 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:34 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:34 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:38 [INFO] Server running on port 3000
+2025-10-06 14:04:38 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:38 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:38 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:42 [INFO] Server running on port 3000
+2025-10-06 14:04:42 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:42 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:42 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:49 [INFO] Server running on port 3000
+2025-10-06 14:04:49 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:49 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:49 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:04:55 [INFO] Connected to MySQL database
+2025-10-06 14:04:55 [INFO] Server running on port 3000
+2025-10-06 14:04:55 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:04:55 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:04:55 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:05:01 [INFO] Connected to MySQL database
+2025-10-06 14:05:01 [INFO] Server running on port 3000
+2025-10-06 14:05:01 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:05:01 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:05:01 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:06:22 [INFO] POST /api/news/insert - IP: ::1
+2025-10-06 14:06:22 [INFO] POST /api/news/insert - 200 - 13ms
+2025-10-06 14:06:44 [INFO] DELETE /api/news/delete - IP: ::1
+2025-10-06 14:06:44 [INFO] DELETE /api/news/delete - 200 - 5ms
+2025-10-06 14:07:04 [INFO] DELETE /api/news/delete - IP: ::1
+2025-10-06 14:07:04 [INFO] DELETE /api/news/delete - 404 - 3ms
+2025-10-06 14:10:57 [INFO] Connected to MySQL database
+2025-10-06 14:10:57 [INFO] Server running on port 3000
+2025-10-06 14:10:57 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:10:57 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:10:57 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:11:03 [INFO] DELETE /api/news/delete - IP: ::1
+2025-10-06 14:11:03 [ERROR] Delete news error: Table 'kconnect.invalid_tab' doesn't exist
+2025-10-06 14:11:03 [INFO] DELETE /api/news/delete - 500 - 11ms
+2025-10-06 14:11:47 [INFO] Connected to MySQL database
+2025-10-06 14:11:47 [INFO] Server running on port 3000
+2025-10-06 14:11:47 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:11:47 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:11:47 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:24:30 [INFO] Connected to MySQL database
+2025-10-06 14:24:30 [INFO] Server running on port 3000
+2025-10-06 14:24:30 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:24:30 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:24:30 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:24:49 [INFO] Connected to MySQL database
+2025-10-06 14:24:49 [INFO] Server running on port 3000
+2025-10-06 14:24:49 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:24:49 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:24:49 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:26:01 [INFO] Connected to MySQL database
+2025-10-06 14:26:01 [INFO] Server running on port 3000
+2025-10-06 14:26:01 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:26:01 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:26:01 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:48:03 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 14:48:03 [INFO] POST /api/upload_file - 200 - 24ms
+2025-10-06 14:49:40 [INFO] Connected to MySQL database
+2025-10-06 14:49:40 [INFO] Server running on port 3000
+2025-10-06 14:49:40 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:49:40 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:49:40 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:50:15 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 14:50:15 [INFO] POST /api/upload_file - 200 - 13ms
+2025-10-06 14:50:16 [INFO] GET /uploads/news/1759737015183-398183822.pdf - IP: ::1
+2025-10-06 14:51:21 [INFO] Connected to MySQL database
+2025-10-06 14:51:21 [INFO] Server running on port 3000
+2025-10-06 14:51:21 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:51:21 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:51:21 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:51:22 [INFO] Connected to MySQL database
+2025-10-06 14:51:22 [INFO] Server running on port 3000
+2025-10-06 14:51:22 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:51:22 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:51:22 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 14:54:08 [INFO] Connected to MySQL database
+2025-10-06 14:54:08 [INFO] Server running on port 3000
+2025-10-06 14:54:08 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 14:54:08 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 14:54:08 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 15:41:46 [INFO] GET /uploads/news/1759737015183-398183822.pdf - IP: ::1
+2025-10-06 15:42:52 [INFO] GET /api/news/list?page=1&limit=5&keyword=&cid=2 - IP: ::1
+2025-10-06 15:42:52 [INFO] GET /api/news/list?page=1&limit=5&keyword=&cid=2 - 200 - 15ms
+2025-10-06 15:42:55 [INFO] GET /api/news/list?page=1&limit=5&keyword=&cid=3 - IP: ::1
+2025-10-06 15:42:55 [INFO] GET /api/news/list?page=1&limit=5&keyword=&cid=3 - 200 - 4ms
+2025-10-06 15:53:32 [INFO] Connected to MySQL database
+2025-10-06 15:53:32 [INFO] Server running on port 3000
+2025-10-06 15:53:32 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 15:53:32 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 15:53:32 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 15:53:33 [INFO] Connected to MySQL database
+2025-10-06 15:53:33 [INFO] Server running on port 3000
+2025-10-06 15:53:33 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 15:53:33 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 15:53:33 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 15:53:44 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 15:53:44 [INFO] POST /api/upload_file - 200 - 68ms
+2025-10-06 16:01:28 [INFO] Connected to MySQL database
+2025-10-06 16:01:28 [INFO] Server running on port 3000
+2025-10-06 16:01:28 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:01:28 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:01:28 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:01:44 [INFO] Connected to MySQL database
+2025-10-06 16:01:44 [INFO] Server running on port 3000
+2025-10-06 16:01:44 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:01:44 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:01:44 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:01:48 [INFO] Connected to MySQL database
+2025-10-06 16:01:48 [INFO] Server running on port 3000
+2025-10-06 16:01:48 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:01:48 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:01:48 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:02:24 [INFO] GET /api/test-data/create_app_config - IP: ::1
+2025-10-06 16:02:24 [INFO] Table app_config checked/created
+2025-10-06 16:02:24 [INFO] GET /api/test-data/create_app_config - 200 - 72ms
+2025-10-06 16:06:51 [INFO] Connected to MySQL database
+2025-10-06 16:06:51 [INFO] Server running on port 3000
+2025-10-06 16:06:51 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:06:51 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:06:51 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:07:05 [INFO] Connected to MySQL database
+2025-10-06 16:07:05 [INFO] Server running on port 3000
+2025-10-06 16:07:05 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:07:05 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:07:05 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:07:17 [INFO] Connected to MySQL database
+2025-10-06 16:07:17 [INFO] Server running on port 3000
+2025-10-06 16:07:17 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:07:17 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:07:17 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:07:34 [INFO] Connected to MySQL database
+2025-10-06 16:07:34 [INFO] Server running on port 3000
+2025-10-06 16:07:34 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:07:34 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:07:34 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:07:37 [INFO] Connected to MySQL database
+2025-10-06 16:07:37 [INFO] Server running on port 3000
+2025-10-06 16:07:37 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:07:37 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:07:37 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:07:38 [INFO] Connected to MySQL database
+2025-10-06 16:07:38 [INFO] Server running on port 3000
+2025-10-06 16:07:38 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:07:38 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:07:38 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:07:45 [INFO] Connected to MySQL database
+2025-10-06 16:07:45 [INFO] Server running on port 3000
+2025-10-06 16:07:45 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:07:45 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:07:45 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:15:12 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:15:12 [INFO] POST /api/upload_file - 400 - 17ms
+2025-10-06 16:15:36 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:15:36 [INFO] POST /api/upload_file - 400 - 11ms
+2025-10-06 16:15:43 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:15:43 [INFO] POST /api/upload_file - 400 - 9ms
+2025-10-06 16:15:48 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:15:48 [INFO] POST /api/upload_file - 400 - 6ms
+2025-10-06 16:17:38 [INFO] Connected to MySQL database
+2025-10-06 16:17:39 [INFO] Server running on port 3000
+2025-10-06 16:17:39 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:17:39 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:17:39 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:17:46 [INFO] Connected to MySQL database
+2025-10-06 16:17:46 [INFO] Server running on port 3000
+2025-10-06 16:17:46 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:17:46 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:17:46 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:17:53 [INFO] Connected to MySQL database
+2025-10-06 16:17:53 [INFO] Server running on port 3000
+2025-10-06 16:17:53 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:17:53 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:17:53 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:17:59 [INFO] Connected to MySQL database
+2025-10-06 16:17:59 [INFO] Server running on port 3000
+2025-10-06 16:17:59 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:17:59 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:17:59 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:18:20 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:18:20 [INFO] POST /api/upload_file - 200 - 17ms
+2025-10-06 16:18:27 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:18:27 [INFO] POST /api/upload_file - 200 - 11ms
+2025-10-06 16:18:59 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:18:59 [INFO] POST /api/upload_file - 400 - 22ms
+2025-10-06 16:19:09 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:19:09 [INFO] POST /api/upload_file - 400 - 12ms
+2025-10-06 16:21:03 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:21:03 [INFO] POST /api/upload_file - 400 - 25ms
+2025-10-06 16:21:57 [INFO] Connected to MySQL database
+2025-10-06 16:21:57 [INFO] Server running on port 3000
+2025-10-06 16:21:57 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:21:57 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:21:57 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:23:04 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:23:04 [INFO] POST /api/upload_file - 200 - 38ms
+2025-10-06 16:23:07 [INFO] GET /uploads2/news/20251006162304-304693758.pdf - IP: ::1
+2025-10-06 16:23:07 [INFO] GET /uploads2/news/20251006162304-304693758.pdf - 404 - 2ms
+2025-10-06 16:23:11 [INFO] GET /uploads2/news/20251006162304-47818347.pdf - IP: ::1
+2025-10-06 16:23:11 [INFO] GET /uploads2/news/20251006162304-47818347.pdf - 404 - 2ms
+2025-10-06 16:23:46 [INFO] GET /uploads2/news/20251006162304-304693758.pdf - IP: ::1
+2025-10-06 16:23:46 [INFO] GET /uploads2/news/20251006162304-304693758.pdf - 404 - 2ms
+2025-10-06 16:24:00 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:24:00 [INFO] POST /api/upload_file - 200 - 21ms
+2025-10-06 16:24:01 [INFO] GET /uploads/news/20251006162400-812083549.pdf - IP: ::1
+2025-10-06 16:27:37 [INFO] Connected to MySQL database
+2025-10-06 16:27:37 [INFO] Server running on port 3000
+2025-10-06 16:27:37 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:27:37 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:27:37 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:27:51 [INFO] Connected to MySQL database
+2025-10-06 16:27:51 [INFO] Server running on port 3000
+2025-10-06 16:27:51 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:27:51 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:27:51 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:35:07 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:35:07 [INFO] POST /api/upload_file - 200 - 25ms
+2025-10-06 16:35:08 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:35:08 [INFO] POST /api/upload_file - 200 - 12ms
+2025-10-06 16:35:08 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:35:08 [INFO] POST /api/upload_file - 200 - 10ms
+2025-10-06 16:37:34 [INFO] Connected to MySQL database
+2025-10-06 16:37:34 [INFO] Server running on port 3000
+2025-10-06 16:37:34 [INFO] Test endpoint: http://localhost:3000/api/test
+2025-10-06 16:37:34 [INFO] Insert data: POST http://localhost:3000/api/test-data/insert_data
+2025-10-06 16:37:34 [INFO] List data: GET http://localhost:3000/api/test-data/list_data
+2025-10-06 16:38:04 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:38:04 [INFO] POST /api/upload_file - 400 - 14ms
+2025-10-06 16:38:17 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:38:17 [INFO] POST /api/upload_file - 200 - 13ms
+2025-10-06 16:38:18 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:38:18 [INFO] POST /api/upload_file - 200 - 11ms
+2025-10-06 16:38:19 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:38:19 [INFO] POST /api/upload_file - 400 - 8ms
+2025-10-06 16:38:41 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:38:41 [INFO] POST /api/upload_file - 400 - 10ms
+2025-10-06 16:38:57 [INFO] POST /api/upload_file - IP: ::1
+2025-10-06 16:38:57 [INFO] POST /api/upload_file - 200 - 9ms
+2025-10-06 16:39:03 [INFO] GET /uploads/news/20251006163857-509747129.pdf - IP: ::1
