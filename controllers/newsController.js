@@ -1,6 +1,7 @@
 import { getDatabase } from '../config/database.js';
 import { createCategoryTable } from '../utils/fileUpload.js';
 import logger from '../utils/logger.js';
+import { addFormattedDatesToList, addFormattedDates } from '../utils/dateFormatter.js';
 
 const MENU = 'news';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -16,6 +17,7 @@ export const insertNews = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: title, detail, upload_key, status, uid',
         required: ['title', 'detail', 'upload_key', 'status', 'uid']
       });
     }
@@ -84,6 +86,7 @@ export const updateNews = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, title, detail, status, uid',
         required: ['id', 'title', 'detail', 'status', 'uid']
       });
     }
@@ -103,7 +106,8 @@ export const updateNews = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        error: 'News not found or already deleted'
+        error: 'News not found or already deleted',
+        message: 'ไม่พบข่าวที่ต้องการแก้ไข หรืออาจถูกลบไปแล้ว'
       });
     }
 
@@ -139,6 +143,7 @@ export const deleteNews = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, uid',
         required: ['id', 'uid']
       });
     }
@@ -156,7 +161,8 @@ export const deleteNews = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        error: 'News not found or already deleted'
+        error: 'News not found or already deleted',
+        message: 'ไม่พบข่าวที่ต้องการลบ หรืออาจถูกลบไปแล้ว'
       });
     }
 
@@ -227,9 +233,12 @@ export const getNewsList = async (req, res) => {
 
     const [rows] = await db.execute(dataQuery, queryParams);
 
+    // Add formatted dates
+    const formattedRows = addFormattedDatesToList(rows);
+
     res.json({
       success: true,
-      data: rows,
+      data: formattedRows,
       pagination: {
         current_page: pageNum,
         per_page: limitNum,
@@ -259,7 +268,7 @@ export const getNewsById = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Invalid ID parameter',
-        message: 'ID must be a valid number'
+        message: 'ID ต้องเป็นตัวเลขเท่านั้น'
       });
     }
 
@@ -278,7 +287,7 @@ export const getNewsById = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'News not found',
-        message: 'News article not found or has been deleted'
+        message: 'ไม่พบข่าวที่ต้องการ หรืออาจถูกลบไปแล้ว'
       });
     }
 
@@ -292,17 +301,20 @@ export const getNewsById = async (req, res) => {
 
     const [attachments] = await db.execute(attachmentQuery, [rows[0].upload_key]);
 
-    // Add domain to file_path
+    // Add domain to file_path and format dates for attachments
     const domain = process.env.DOMAIN || 'http://localhost:3000';
     const attachmentsWithUrl = attachments.map(attachment => ({
-      ...attachment,
+      ...addFormattedDates(attachment, ['create_date']),
       file_path: `${domain}/${attachment.file_path}`
     }));
+
+    // Format dates for main news data
+    const formattedNews = addFormattedDates(rows[0]);
 
     res.json({
       success: true,
       data: {
-        ...rows[0],
+        ...formattedNews,
         attachments: attachmentsWithUrl
       },
       timestamp: new Date().toISOString()
@@ -327,6 +339,7 @@ export const insertCategory = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: title, status, uid',
         required: ['title', 'status', 'uid']
       });
     }
@@ -371,6 +384,7 @@ export const updateCategory = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, title, status, uid',
         required: ['id', 'title', 'status', 'uid']
       });
     }
@@ -388,7 +402,8 @@ export const updateCategory = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Category not found or already deleted'
+        error: 'Category not found or already deleted',
+        message: 'ไม่พบหมวดหมู่ที่ต้องการแก้ไข หรืออาจถูกลบไปแล้ว'
       });
     }
 
@@ -422,6 +437,7 @@ export const deleteCategory = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, uid',
         required: ['id', 'uid']
       });
     }
@@ -439,7 +455,8 @@ export const deleteCategory = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Category not found or already deleted'
+        error: 'Category not found or already deleted',
+        message: 'ไม่พบหมวดหมู่ที่ต้องการลบ หรืออาจถูกลบไปแล้ว'
       });
     }
 
@@ -496,9 +513,12 @@ export const getCategoryList = async (req, res) => {
 
     const [rows] = await db.execute(dataQuery, queryParams);
 
+    // Add formatted dates
+    const formattedRows = addFormattedDatesToList(rows);
+
     res.json({
       success: true,
-      data: rows,
+      data: formattedRows,
       pagination: {
         current_page: pageNum,
         per_page: limitNum,

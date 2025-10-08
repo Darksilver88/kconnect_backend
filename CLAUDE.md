@@ -29,32 +29,42 @@ npm start
 
 ### Project Structure
 ```
-kconnect/
+kconnect_backend/
 ├── server.js              # Entry point & server setup
 ├── config/
 │   └── database.js        # Database connection & config
 ├── routes/
 │   ├── index.js          # Main API router
-│   └── testData.js       # Test data routes
+│   ├── testData.js       # Test data routes
+│   └── news.js           # News routes
 ├── controllers/
-│   └── testDataController.js  # Business logic
+│   ├── testDataController.js  # Test data business logic
+│   ├── newsController.js      # News business logic
+│   └── uploadController.js    # File upload business logic
 ├── middleware/
 │   ├── errorHandler.js   # Error handling middleware
 │   └── logger.js         # Request logging middleware
 ├── utils/
-│   ├── fileUpload.js     # File upload helpers
-│   └── logger.js         # Winston logger configuration
-└── logs/                 # Log files (auto-created)
+│   ├── fileUpload.js     # File upload helpers & multer config
+│   ├── logger.js         # Winston logger configuration
+│   └── config.js         # Dynamic config from database
+├── logs/                 # Log files (auto-created)
+└── uploads/              # Uploaded files (auto-created)
+    └── {menu}/           # Organized by menu/module
 ```
 
 ## Database Configuration
 
 MySQL connection configured via .env file:
-- DB_HOST=localhost
-- DB_USER=root
-- DB_PASSWORD=04560456
-- DB_NAME=kconnect
-- PORT=3000
+- `DB_HOST` - Database host (default: localhost)
+- `DB_USER` - Database user (default: root)
+- `DB_PASSWORD` - Database password
+- `DB_NAME` - Database name (default: kconnect)
+- `PORT` - Server port (default: 3000)
+- `NODE_ENV` - Environment mode (development/production)
+- `DOMAIN` - Base URL for file paths (default: http://localhost:3000)
+
+**Connection Pattern**: Single MySQL connection created on startup via `mysql2/promise`
 
 ## API Endpoints
 
@@ -80,6 +90,7 @@ MySQL connection configured via .env file:
 
 ### File Upload API
 - `POST /api/upload_file` - Upload files to specific module (menu + upload_key)
+- `DELETE /api/delete_file` - Soft delete file attachment (set status=2)
 
 ### Database Schema
 
@@ -114,11 +125,11 @@ MySQL connection configured via .env file:
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
 
-**news_attachment table:**
+**{menu}_attachment table (dynamic):**
 - `id` - INT AUTO_INCREMENT PRIMARY KEY
 - `upload_key` - CHAR(32) NOT NULL
 - `file_name` - VARCHAR(255) NOT NULL
-- `file_size` - INT NOT NULL
+- `file_size` - INT NOT NULL (bytes)
 - `file_ext` - VARCHAR(10) NOT NULL
 - `file_path` - VARCHAR(500) NOT NULL
 - `status` - INT NOT NULL DEFAULT 1
@@ -128,6 +139,15 @@ MySQL connection configured via .env file:
 - `update_by` - INT NULL
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
+
+**app_config table (system configuration):**
+- `config_key` - VARCHAR PRIMARY KEY (e.g., 'max_file_size', 'allowed_file_types')
+- `config_value` - TEXT NOT NULL (stored as string)
+- `data_type` - ENUM('string', 'number', 'boolean', 'json')
+- `description` - TEXT NULL
+- `is_active` - BOOLEAN DEFAULT TRUE
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
 
 ### API Parameters
 
@@ -159,11 +179,16 @@ MySQL connection configured via .env file:
 ### File Upload Support
 
 - **Multiple Files**: Support multiple file uploads via form-data
-- **File Types**: jpeg, jpg, png, gif, pdf, doc, docx, txt, zip, rar
-- **Size Limit**: 10MB per file
+- **File Types**: Default: jpeg, jpg, png, gif, pdf, doc, docx, txt, zip, rar (configurable via `app_config.allowed_file_types`)
+- **Size Limit**: Default: 10MB per file (configurable via `app_config.max_file_size`)
+- **File Count Limit**: Default: 5 files per upload_key (configurable via `app_config.max_file_count`)
 - **Dynamic Storage**: Files stored in `uploads/{menu}/` based on menu parameter
 - **Table Auto-Detection**: Uses `{menu}_attachment` table structure
-- **Error Handling**: Validates table existence before upload
+- **Validation**:
+  - Checks table existence before upload
+  - Validates file size, type, and total file count
+  - Counts existing files for upload_key before allowing new uploads
+- **File URL**: Returns full URL using DOMAIN environment variable
 
 ## Error Handling
 
@@ -176,9 +201,34 @@ MySQL connection configured via .env file:
 
 - **Modular Structure**: Routes, controllers, and middleware separated by feature
 - **ES6 Modules**: Uses import/export syntax throughout
-- **CORS Enabled**: Cross-origin requests allowed
+- **CORS Enabled**: Cross-origin requests allowed (all origins via wildcard)
 - **Auto Table Creation**: Tables created automatically on first use
 - **Clean Separation**: Business logic in controllers, routing in routes/
+- **Soft Deletes**: All deletions set `status=2` instead of removing records
+- **Upload Key Pattern**: 32-character keys used to link attachments to content
+- **Dynamic Config**: Runtime configuration stored in `app_config` table via `utils/config.js`
+
+## Configuration System
+
+The API uses a database-driven configuration system (`utils/config.js`) that allows runtime configuration without code changes:
+
+**Available Functions**:
+- `getConfig(key)` - Get single config value (auto-converts to correct data type)
+- `getAllConfigs()` - Get all active configs as object
+- `setConfig(key, value, userId)` - Update config value
+
+**Common Config Keys**:
+- `max_file_size` - Maximum file size in MB (default: 10)
+- `max_file_count` - Maximum files per upload_key (default: 5)
+- `allowed_file_types` - JSON array of allowed extensions
+
+**Usage Example**:
+```javascript
+import { getConfig } from '../utils/config.js';
+
+const maxSize = await getConfig('max_file_size') || 10;
+const allowedTypes = await getConfig('allowed_file_types') || ['jpg', 'png'];
+```
 
 ## Logging System
 

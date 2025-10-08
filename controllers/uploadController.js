@@ -12,6 +12,7 @@ export const uploadFiles = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: upload_key, menu',
         required: ['upload_key', 'menu']
       });
     }
@@ -19,7 +20,8 @@ export const uploadFiles = async (req, res) => {
     if (!files || files.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'No files uploaded'
+        error: 'No files uploaded',
+        message: 'กรุณาเลือกไฟล์ที่ต้องการอัพโหลด'
       });
     }
 
@@ -40,7 +42,7 @@ export const uploadFiles = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: `Table '${tableName}' does not exist`,
-        message: `Please create the ${menu} module first`
+        message: `ไม่พบตาราง ${tableName} กรุณาสร้างโมดูล ${menu} ก่อนใช้งาน`
       });
     }
 
@@ -64,7 +66,7 @@ export const uploadFiles = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Total file limit exceeded',
-        message: `You already have ${existingCount} files. Adding ${files.length} more would exceed the limit of ${maxFileCount} files.`,
+        message: `มีไฟล์อยู่แล้ว ${existingCount} ไฟล์ การเพิ่ม ${files.length} ไฟล์จะเกินจำนวนสูงสุด ${maxFileCount} ไฟล์`,
         details: {
           existing_files: existingCount,
           new_files: files.length,
@@ -83,7 +85,7 @@ export const uploadFiles = async (req, res) => {
         return res.status(400).json({
           success: false,
           error: 'File too large',
-          message: `File '${file.originalname}' is ${fileSizeMB}MB. Maximum allowed size is ${maxFileSizeMB}MB.`,
+          message: `ไฟล์ '${file.originalname}' มีขนาด ${fileSizeMB}MB เกินขนาดสูงสุดที่กำหนด ${maxFileSizeMB}MB`,
           details: {
             filename: file.originalname,
             file_size: file.size,
@@ -98,7 +100,7 @@ export const uploadFiles = async (req, res) => {
         return res.status(400).json({
           success: false,
           error: 'Invalid file type',
-          message: `File type '.${fileExt}' is not allowed. Allowed types: ${allowedFileTypes.join(', ')}.`,
+          message: `ไม่รองรับไฟล์ประเภท '.${fileExt}' ประเภทที่รองรับ: ${allowedFileTypes.join(', ')}`,
           details: {
             filename: file.originalname,
             file_extension: fileExt,
@@ -174,6 +176,7 @@ export const deleteFile = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, uid, menu',
         required: ['id', 'uid', 'menu']
       });
     }
@@ -195,7 +198,7 @@ export const deleteFile = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: `Table '${tableName}' does not exist`,
-        message: `Please create the ${menu} module first`
+        message: `ไม่พบตาราง ${tableName} กรุณาสร้างโมดูล ${menu} ก่อนใช้งาน`
       });
     }
 
@@ -211,7 +214,8 @@ export const deleteFile = async (req, res) => {
     if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        error: 'File not found or already deleted'
+        error: 'File not found or already deleted',
+        message: 'ไม่พบไฟล์ที่ต้องการลบ หรืออาจถูกลบไปแล้ว'
       });
     }
 
