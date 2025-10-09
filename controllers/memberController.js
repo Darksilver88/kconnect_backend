@@ -1,6 +1,6 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
-import { addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
 
 const MENU = 'member';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -79,6 +79,57 @@ export const insertMember = async (req, res) => {
   }
 };
 
+export const getMemberDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ id',
+        required: ['id']
+      });
+    }
+
+    const db = getDatabase();
+
+    const query = `
+      SELECT id, upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status,
+             create_date, create_by, update_date, update_by, delete_date, delete_by
+      FROM ${TABLE_INFORMATION}
+      WHERE id = ? AND status != 2
+    `;
+
+    const [rows] = await db.execute(query, [id]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Member not found',
+        message: 'ไม่พบข้อมูลสมาชิก'
+      });
+    }
+
+    // Add formatted dates (including enter_date)
+    const formattedData = addFormattedDates(rows[0], ['create_date', 'update_date', 'delete_date', 'enter_date']);
+
+    res.json({
+      success: true,
+      data: formattedData,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get member detail error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch member',
+      message: error.message
+    });
+  }
+};
+
 export const getMemberList = async (req, res) => {
   try {
     const { page = 1, limit = 10, status, keyword, user_level, user_type, customer_id, room_id } = req.query;
@@ -145,7 +196,7 @@ export const getMemberList = async (req, res) => {
              create_date, create_by, update_date, update_by, delete_date, delete_by
       FROM ${TABLE_INFORMATION}
       ${whereClause}
-      ORDER BY create_date DESC
+      ORDER BY CASE WHEN user_level = 'owner' THEN 0 ELSE 1 END, create_date DESC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
 

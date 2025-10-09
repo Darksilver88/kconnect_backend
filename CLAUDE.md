@@ -36,18 +36,23 @@ kconnect_backend/
 ├── routes/
 │   ├── index.js          # Main API router
 │   ├── testData.js       # Test data routes
-│   └── news.js           # News routes
+│   ├── news.js           # News routes
+│   ├── room.js           # Room routes
+│   └── member.js         # Member routes
 ├── controllers/
-│   ├── testDataController.js  # Test data business logic
+│   ├── testDataController.js  # Test data & table creation
 │   ├── newsController.js      # News business logic
-│   └── uploadController.js    # File upload business logic
+│   ├── uploadController.js    # File upload business logic
+│   ├── roomController.js      # Room business logic
+│   └── memberController.js    # Member business logic
 ├── middleware/
 │   ├── errorHandler.js   # Error handling middleware
 │   └── logger.js         # Request logging middleware
 ├── utils/
 │   ├── fileUpload.js     # File upload helpers & multer config
 │   ├── logger.js         # Winston logger configuration
-│   └── config.js         # Dynamic config from database
+│   ├── config.js         # Dynamic config from database
+│   └── dateFormatter.js  # Thai date formatting utilities
 ├── logs/                 # Log files (auto-created)
 └── uploads/              # Uploaded files (auto-created)
     └── {menu}/           # Organized by menu/module
@@ -72,10 +77,13 @@ MySQL connection configured via .env file:
 - `GET /api/test` - Test endpoint returning API status and timestamp
 - `GET /health` - Health check endpoint
 
-### Test Data
+### Test Data & Table Creation
 - `GET /api/test-data/insert_data` - Insert random data into test_list table
 - `GET /api/test-data/list_data` - Fetch all data from test_list table
-- `GET /api/test-data/create_news_attachment` - Create random news attachment record
+- `GET /api/test-data/create_news_attachment` - Create news_attachment table
+- `GET /api/test-data/create_app_config` - Create and initialize app_config table
+- `GET /api/test-data/create_room_information` - Create room_information table
+- `GET /api/test-data/create_member_information` - Create member_information table
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -87,6 +95,14 @@ MySQL connection configured via .env file:
 - `PUT /api/news/update_category` - Update news category
 - `DELETE /api/news/delete_category` - Soft delete news category (set status=2)
 - `GET /api/news/list_category` - List categories with pagination
+
+### Room API
+- `POST /api/room/insert` - Insert room (requires: title, upload_key, customer_id, owner_id, status, uid)
+- `GET /api/room/list` - List rooms with pagination (requires: customer_id)
+
+### Member API
+- `POST /api/member/insert` - Insert member (requires: upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, uid)
+- `GET /api/member/list` - List members with pagination (requires: customer_id)
 
 ### File Upload API
 - `POST /api/upload_file` - Upload files to specific module (menu + upload_key)
@@ -149,6 +165,44 @@ MySQL connection configured via .env file:
 - `update_date` - TIMESTAMP NULL
 - `update_by` - INT NULL
 
+**room_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `title` - VARCHAR(255) NOT NULL
+- `type_id` - INT NULL
+- `customer_id` - VARCHAR(255) NULL
+- `owner_id` - INT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
+**member_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `prefix_name` - VARCHAR(50) NOT NULL
+- `full_name` - VARCHAR(255) NOT NULL
+- `phone_number` - VARCHAR(50) NOT NULL
+- `email` - VARCHAR(255) NOT NULL
+- `enter_date` - TIMESTAMP NOT NULL
+- `room_id` - INT NOT NULL
+- `house_no` - VARCHAR(50) NOT NULL
+- `user_level` - VARCHAR(50) NOT NULL
+- `user_type` - VARCHAR(50) NOT NULL
+- `user_ref` - VARCHAR(255) NOT NULL
+- `member_ref` - VARCHAR(255) NOT NULL
+- `customer_id` - VARCHAR(50) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
 ### API Parameters
 
 **News API:**
@@ -163,6 +217,21 @@ MySQL connection configured via .env file:
 - **Delete**: `{id, uid}` via `/api/news/delete_category`
 - **List**: `?page=1&limit=10&status=1` via `/api/news/list_category` (pagination + optional status filter)
 
+**Room API:**
+- **Insert**: `{title, upload_key, customer_id, owner_id, status, uid, type_id?}` via `/api/room/insert`
+  - Required: title, upload_key, customer_id, owner_id, status, uid
+  - Optional: type_id
+- **List**: `?page=1&limit=10&status=1&keyword=search&type_id=1&customer_id=xxx&owner_id=1` via `/api/room/list`
+  - Required: customer_id
+  - Optional: page, limit, status, keyword, type_id, owner_id
+
+**Member API:**
+- **Insert**: `{upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, uid}` via `/api/member/insert`
+  - All fields are required
+- **List**: `?page=1&limit=10&status=1&keyword=search&user_level=xxx&user_type=xxx&customer_id=xxx&room_id=1` via `/api/member/list`
+  - Required: customer_id
+  - Optional: page, limit, status, keyword, user_level, user_type, room_id
+
 **File Upload API:**
 - **Upload**: `{upload_key, menu}` + files via form-data to `/api/upload_file`
 - **Delete**: `{id, uid, menu}` to `/api/delete_file` (soft delete)
@@ -175,6 +244,49 @@ MySQL connection configured via .env file:
 - **Category**: `cid` - filter by category ID (0 = all categories)
 - **Status**: `status` - filter by status
 - **Pagination**: `page`, `limit` - standard pagination
+
+**Room List Filters:**
+- **Search**: `keyword` - searches in title (LIKE %keyword%)
+- **Type**: `type_id` - filter by room type ID (0 = all types)
+- **Owner**: `owner_id` - filter by owner ID (0 = all owners)
+- **Customer**: `customer_id` - REQUIRED - filter by customer ID
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Pagination**: `page`, `limit` - standard pagination
+
+**Member List Filters:**
+- **Search**: `keyword` - searches in full_name, house_no, user_ref, member_ref (LIKE %keyword%)
+- **User Level**: `user_level` - filter by user level
+- **User Type**: `user_type` - filter by user type
+- **Room**: `room_id` - filter by room ID (0 = all rooms)
+- **Customer**: `customer_id` - REQUIRED - filter by customer ID
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Pagination**: `page`, `limit` - standard pagination
+
+### Date Formatting
+
+All list and detail endpoints return dates in two formats:
+- **ISO Format**: Original timestamp field (e.g., `create_date: "2025-10-08T09:27:32.000Z"`)
+- **Thai Format**: Formatted field with `_formatted` suffix (e.g., `create_date_formatted: "8 ตุลาคม 2568 16:27:32"`)
+
+**Formatted Date Fields**:
+- Uses Thai Buddhist Era (พ.ศ.) - adds 543 years to Gregorian year
+- Uses Thai month names (มกราคม, กุมภาพันธ์, etc.)
+- Format: `{day} {month_thai} {year_buddhist} {HH}:{mm}:{ss}`
+- Automatically applied to: `create_date`, `update_date`, `delete_date`, `enter_date` (member only)
+
+**Implementation**:
+```javascript
+import { addFormattedDatesToList } from '../utils/dateFormatter.js';
+
+// For single record
+const formattedRecord = addFormattedDates(record);
+
+// For list of records
+const formattedRows = addFormattedDatesToList(rows);
+
+// Specify which date fields to format (default: create_date, update_date, delete_date)
+const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date', 'delete_date', 'enter_date']);
+```
 
 ### File Upload Support
 
@@ -196,6 +308,16 @@ MySQL connection configured via .env file:
 - Global error handler with development/production modes
 - 404 handler for undefined routes
 - Database connection error handling with graceful shutdown
+- **Error Messages**: All validation errors include Thai language `message` field for frontend display
+- **Error Response Format**:
+  ```json
+  {
+    "success": false,
+    "error": "Missing required fields",
+    "message": "กรุณากรอกข้อมูลที่จำเป็น: field1, field2",
+    "required": ["field1", "field2"]
+  }
+  ```
 
 ## Development Notes
 
