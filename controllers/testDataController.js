@@ -243,3 +243,139 @@ export const createAppConfig = async (req, res) => {
     });
   }
 };
+
+export const createRoomInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS room_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        type_id INT NULL,
+        customer_id VARCHAR(255) NULL,
+        owner_id INT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table room_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Room information table created successfully',
+      data: {
+        table_name: 'room_information',
+        table_created: true,
+        fields: [
+          'id',
+          'upload_key',
+          'title',
+          'type_id',
+          'customer_id',
+          'owner_id',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create room information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create room information table',
+      message: error.message
+    });
+  }
+};
+
+export const createMemberInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS member_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        prefix_name VARCHAR(50) NOT NULL,
+        full_name VARCHAR(255) NOT NULL,
+        phone_number VARCHAR(50) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        enter_date TIMESTAMP NOT NULL,
+        room_id INT NOT NULL,
+        house_no VARCHAR(50) NOT NULL,
+        user_level VARCHAR(50) NOT NULL,
+        user_type VARCHAR(50) NOT NULL,
+        user_ref VARCHAR(255) NOT NULL,
+        member_ref VARCHAR(255) NOT NULL,
+        customer_id VARCHAR(50) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table member_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Member information table created successfully',
+      data: {
+        table_name: 'member_information',
+        table_created: true,
+        fields: [
+          'id',
+          'upload_key',
+          'prefix_name',
+          'full_name',
+          'phone_number',
+          'email',
+          'enter_date',
+          'room_id',
+          'house_no',
+          'user_level',
+          'user_type',
+          'user_ref',
+          'member_ref',
+          'customer_id',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create member information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create member information table',
+      message: error.message
+    });
+  }
+};
