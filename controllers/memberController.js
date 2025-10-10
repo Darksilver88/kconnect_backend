@@ -28,19 +28,19 @@ export const insertMember = async (req, res) => {
     const roomIdValue = parseInt(room_id);
 
     const [result] = await db.execute(insertQuery, [
-      upload_key,
-      prefix_name,
-      full_name,
-      phone_number,
-      email,
+      upload_key?.trim(),
+      prefix_name?.trim(),
+      full_name?.trim(),
+      phone_number?.trim(),
+      email?.trim(),
       enter_date,
       roomIdValue,
-      house_no,
-      user_level,
-      user_type,
-      user_ref,
-      member_ref,
-      customer_id,
+      house_no?.trim(),
+      user_level?.trim(),
+      user_type?.trim(),
+      user_ref?.trim(),
+      member_ref?.trim(),
+      customer_id?.trim(),
       status,
       uid
     ]);

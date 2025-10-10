@@ -29,10 +29,10 @@ export const insertRoom = async (req, res) => {
     const ownerIdValue = parseInt(owner_id);
 
     const [result] = await db.execute(insertQuery, [
-      upload_key,
-      title,
+      upload_key?.trim(),
+      title?.trim(),
       typeIdValue,
-      customer_id,
+      customer_id?.trim(),
       ownerIdValue,
       status,
       uid

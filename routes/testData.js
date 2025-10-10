@@ -1,5 +1,5 @@
 import express from 'express';
-import { insertTestData, getTestDataList, createNewsAttachment, createAppConfig, createRoomInformation, createMemberInformation } from '../controllers/testDataController.js';
+import { insertTestData, getTestDataList, createNewsAttachment, createBillAttachment, createAppConfig, createRoomInformation, createMemberInformation, createBillInformation, createBillRoomInformation, createBillTypeInformation } from '../controllers/testDataController.js';
 
 const router = express.Router();
 
@@ -7,8 +7,12 @@ const router = express.Router();
 router.get('/insert_data', insertTestData);
 router.get('/list_data', getTestDataList);
 router.get('/create_news_attachment', createNewsAttachment);
+router.get('/create_bill_attachment', createBillAttachment);
 router.get('/create_app_config', createAppConfig);
 router.get('/create_room_information', createRoomInformation);
 router.get('/create_member_information', createMemberInformation);
+router.get('/create_bill_information', createBillInformation);
+router.get('/create_bill_room_information', createBillRoomInformation);
+router.get('/create_bill_type_information', createBillTypeInformation);
 
 export default router;

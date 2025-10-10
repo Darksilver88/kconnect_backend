@@ -5,6 +5,9 @@ import testDataRoutes from './testData.js';
 import newsRoutes from './news.js';
 import roomRoutes from './room.js';
 import memberRoutes from './member.js';
+import billRoutes from './bill.js';
+import billTypeRoutes from './billType.js';
+import billRoomRoutes from './billRoom.js';
 
 const router = express.Router();
 
@@ -23,5 +26,8 @@ router.use('/test-data', testDataRoutes);
 router.use('/news', newsRoutes);
 router.use('/room', roomRoutes);
 router.use('/member', memberRoutes);
+router.use('/bill', billRoutes);
+router.use('/bill_type', billTypeRoutes);
+router.use('/bill_room', billRoomRoutes);
 
 export default router;

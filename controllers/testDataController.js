@@ -79,6 +79,51 @@ export const getTestDataList = async (req, res) => {
   }
 };
 
+export const createBillAttachment = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createAttachmentTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_attachment (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_size INT NOT NULL,
+        file_ext VARCHAR(10) NOT NULL,
+        file_path VARCHAR(500) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createAttachmentTableQuery);
+    logger.info('Table bill_attachment checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bill attachment table created successfully',
+      data: {
+        table_name: 'bill_attachment',
+        table_created: true
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill attachment error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill attachment table',
+      message: error.message
+    });
+  }
+};
+
 export const createNewsAttachment = async (req, res) => {
   try {
     const db = getDatabase();
@@ -375,6 +420,222 @@ export const createMemberInformation = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to create member information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBillInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        bill_type_id INT NOT NULL,
+        detail TEXT NOT NULL,
+        expire_date TIMESTAMP NOT NULL,
+        send_date TIMESTAMP NULL,
+        remark TEXT NULL,
+        customer_id VARCHAR(50) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bill_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bill information table created successfully',
+      data: {
+        table_name: 'bill_information',
+        table_created: true,
+        fields: [
+          'id',
+          'upload_key',
+          'title',
+          'bill_type_id',
+          'detail',
+          'expire_date',
+          'send_date',
+          'remark',
+          'customer_id',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBillRoomInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_room_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        bill_id INT NOT NULL,
+        bill_no VARCHAR(50) NOT NULL,
+        house_no VARCHAR(50) NOT NULL,
+        member_name VARCHAR(255) NOT NULL,
+        total_price DOUBLE NOT NULL,
+        customer_id VARCHAR(50) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bill_room_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bill room information table created successfully',
+      data: {
+        table_name: 'bill_room_information',
+        table_created: true,
+        fields: [
+          'id',
+          'bill_id',
+          'bill_no',
+          'house_no',
+          'member_name',
+          'total_price',
+          'customer_id',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill room information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill room information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBillTypeInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_type_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bill_type_information checked/created');
+
+    const defaultBillTypes = [
+      { id: 1, title: 'ค่าส่วนกลาง' },
+      { id: 2, title: 'ค่าน้ำ' },
+      { id: 3, title: 'ค่าไฟ' },
+      { id: 4, title: 'ค่าจอดรถ' },
+      { id: 5, title: 'ค่าซ่อมแซม' },
+      { id: 6, title: 'อื่นๆ' }
+    ];
+
+    const uploadKey = Math.random().toString(36).substring(2, 34);
+    const insertedTypes = [];
+
+    for (const type of defaultBillTypes) {
+      const insertQuery = `
+        INSERT IGNORE INTO bill_type_information (id, upload_key, title, status, create_by)
+        VALUES (?, ?, ?, 1, -1)
+      `;
+
+      const [result] = await db.execute(insertQuery, [
+        type.id,
+        uploadKey,
+        type.title
+      ]);
+
+      if (result.affectedRows > 0) {
+        insertedTypes.push({
+          id: type.id,
+          title: type.title
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Bill type information table created and initialized successfully',
+      data: {
+        table_name: 'bill_type_information',
+        table_created: true,
+        types_inserted: insertedTypes,
+        total_types: insertedTypes.length,
+        fields: [
+          'id',
+          'upload_key',
+          'title',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill type information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill type information table',
       message: error.message
     });
   }

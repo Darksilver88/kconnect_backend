@@ -50,7 +50,14 @@ export const insertNews = async (req, res) => {
     `;
 
     const cidValue = cid ? parseInt(cid) : null;
-    const [result] = await db.execute(insertQuery, [upload_key, title, detail, cidValue, status, uid]);
+    const [result] = await db.execute(insertQuery, [
+      upload_key?.trim(),
+      title?.trim(),
+      detail?.trim(),
+      cidValue,
+      status,
+      uid
+    ]);
 
 
     res.json({
@@ -101,7 +108,14 @@ export const updateNews = async (req, res) => {
       WHERE id = ? AND status != 2
     `;
 
-    const [result] = await db.execute(updateQuery, [title, detail, cidValue, status, uid, id]);
+    const [result] = await db.execute(updateQuery, [
+      title?.trim(),
+      detail?.trim(),
+      cidValue,
+      status,
+      uid,
+      id
+    ]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
@@ -352,7 +366,7 @@ export const insertCategory = async (req, res) => {
       VALUES (?, ?, ?)
     `;
 
-    const [result] = await db.execute(insertQuery, [title, status, uid]);
+    const [result] = await db.execute(insertQuery, [title?.trim(), status, uid]);
 
     res.json({
       success: true,
@@ -397,7 +411,7 @@ export const updateCategory = async (req, res) => {
       WHERE id = ? AND status != 2
     `;
 
-    const [result] = await db.execute(updateQuery, [title, status, uid, id]);
+    const [result] = await db.execute(updateQuery, [title?.trim(), status, uid, id]);
 
     if (result.affectedRows === 0) {
       return res.status(404).json({
