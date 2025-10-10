@@ -117,7 +117,8 @@ MySQL connection configured via .env file:
 
 ### Bill API
 - `POST /api/bill/insert` - Insert bill (requires: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid)
-- `POST /api/bill/insert_with_excel` - Insert bill with Excel import (reads Excel from bill_attachment, creates bill + bill_room records)
+- `GET /api/bill/bill_excel_list` - Preview Excel bill data before import (requires: upload_key)
+- `POST /api/bill/insert_with_excel` - Insert bill with Excel import (reads Excel from bill_attachment, creates bill + bill_room records, supports excluded_rows)
 - `PUT /api/bill/update` - Update bill (requires: id, title, detail, expire_date, status, uid)
 - `DELETE /api/bill/delete` - Soft delete bill (set status=2)
 - `GET /api/bill/list` - List bills with pagination (requires: customer_id)
@@ -310,11 +311,26 @@ MySQL connection configured via .env file:
   - Required: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid
   - Optional: remark
   - Note: send_date is auto-set to current date when status=1
-- **Insert with Excel**: `{upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid}` via `/api/bill/insert_with_excel`
+- **Preview Excel**: `?upload_key=xxx` via `/api/bill/bill_excel_list`
+  - Required: upload_key
+  - Returns Excel data preview with validation status (no pagination)
+  - Response includes formatted summary: total_rows, valid_rows, invalid_rows, total_price (with comma formatting)
+  - Each item includes: row_number, house_no, member_name, total_price, remark, status (1=valid, 0=invalid)
+  - Status 0 items include error_message field
+  - Number formatting: comma-separated (e.g., "1,000"), total_price with ฿ prefix
+  - Decimal formatting: shows .00 only if not integer (e.g., "฿8,300" vs "฿8,300.50")
+- **Insert with Excel**: `{upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid, excluded_rows?}` via `/api/bill/insert_with_excel`
+  - Required: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid
+  - Optional: excluded_rows (array of row_number to skip)
   - Reads Excel file from bill_attachment table using upload_key
   - Excel must contain columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน (required), หมายเหตุ (optional)
   - Creates bill_information + batch inserts bill_room_information with remark
   - Uses transaction for data consistency
+  - Uses FOR UPDATE lock to prevent race condition on bill_no generation
+  - Skips rows with missing required fields (เลขห้อง, ชื่อลูกบ้าน, or ยอดเงิน)
+  - Skips rows in excluded_rows array (user-selected rows to exclude)
+  - excluded_rows supports multiple formats: JSON array `[2,4]`, string `"2,4"`, or `"[2,4]"` (form-data compatible)
+  - Returns summary with: total_rooms_inserted, total_rows_excluded, total_rows_skipped
 - **Update**: `{id, title, detail, expire_date, status, uid, remark?}` via `/api/bill/update`
   - Required: id, title, detail, expire_date, status, uid
   - Optional: remark
@@ -461,12 +477,37 @@ const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date
 - **Auto-Generated Fields**:
   - `bill_no` - Auto-generated invoice number (format: INV-YYYY-MMDD-NNN)
   - `send_date` - Auto-set to current timestamp when bill status changes to 1
-- **Excel Import**: Bill system supports importing bill_room data from Excel files with validation
-  - Required columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน
-  - Optional columns: หมายเหตุ
-  - Validates file type (.xlsx, .xls only)
-  - Row-by-row validation with detailed error messages
-  - Batch insert with transaction rollback on error
+- **Race Condition Protection**:
+  - Uses `FOR UPDATE` row locking in transactions to prevent duplicate bill_no
+  - Safe for concurrent requests from multiple users with same customer_id
+  - Ensures sequential bill_no generation even under high load
+- **Excel Import**: Bill system supports importing bill_room data from Excel files with validation and preview
+  - **Preview Flow** (GET /api/bill/bill_excel_list):
+    - Step 1: Upload Excel via `/api/upload_file` (menu=bill) → get upload_key
+    - Step 2: Call preview API with upload_key → get validated list with status indicators
+    - Step 3: Frontend displays preview with "ลำดับ, เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน, หมายเหตุ, สถานะ, จัดการ" columns
+    - Step 4: User can remove rows (valid or invalid) → collect excluded row_numbers
+    - Step 5: Call insert API with excluded_rows parameter
+  - **Excel Format**:
+    - Required columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน
+    - Optional columns: หมายเหตุ
+  - **Validation**:
+    - Validates file type (.xlsx, .xls only)
+    - Detects and rejects HTML-based .xls files (must be native Excel format)
+    - Row-by-row validation: marks rows as status=0 (invalid) or status=1 (valid)
+    - Invalid rows show error_message, valid rows can still be excluded by user
+    - Missing data displayed as "ไม่ระบุ", missing remark displayed as "-"
+  - **Preview Response Formatting**:
+    - Numbers formatted with comma separator (e.g., "1,000")
+    - total_price with ฿ prefix and smart decimal display (e.g., "฿8,300" or "฿8,300.50")
+    - Summary includes: total_rows, valid_rows, invalid_rows, total_price (sum of valid rows only)
+  - **Insert Features**:
+    - Supports excluded_rows parameter (JSON array, string "2,4", or "[2,4]" for form-data)
+    - Skips rows in excluded_rows (user-removed items from preview)
+    - Skips rows with missing required fields automatically
+    - Batch insert for performance (1 query for multiple rows)
+    - Transaction rollback on error
+    - Returns summary: total_rooms_inserted, total_rows_excluded, total_rows_skipped
 
 ## Configuration System
 

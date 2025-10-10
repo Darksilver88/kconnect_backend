@@ -264,7 +264,7 @@ export const getBillDetail = async (req, res) => {
 
 export const insertBillWithExcel = async (req, res) => {
   try {
-    const { upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid } = req.body;
+    const { upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid, excluded_rows } = req.body;
 
     // Validate required fields
     if (!upload_key || !title || !bill_type_id || !detail || !expire_date || !customer_id || status === undefined || !uid) {
@@ -274,6 +274,28 @@ export const insertBillWithExcel = async (req, res) => {
         message: 'กรุณากรอกข้อมูลที่จำเป็น: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid',
         required: ['upload_key', 'title', 'bill_type_id', 'detail', 'expire_date', 'customer_id', 'status', 'uid']
       });
+    }
+
+    // Parse excluded_rows (optional, default = [])
+    // รองรับทั้ง JSON array และ form-data string
+    let excludedRowsArray = [];
+
+    if (Array.isArray(excluded_rows)) {
+      // กรณีส่งมาเป็น JSON array: [2, 4]
+      excludedRowsArray = excluded_rows.map(num => parseInt(num));
+    } else if (typeof excluded_rows === 'string' && excluded_rows.trim() !== '') {
+      // กรณีส่งมาเป็น form-data string: "[2,4]" หรือ "2,4"
+      try {
+        const parsed = JSON.parse(excluded_rows);
+        if (Array.isArray(parsed)) {
+          excludedRowsArray = parsed.map(num => parseInt(num));
+        }
+      } catch {
+        // ถ้า parse ไม่ได้ ลองแยกด้วย comma
+        excludedRowsArray = excluded_rows.split(',')
+          .map(str => parseInt(str.trim()))
+          .filter(num => !isNaN(num));
+      }
     }
 
     const db = getDatabase();
@@ -293,13 +315,14 @@ export const insertBillWithExcel = async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Excel file not found',
-        message: 'ไม่พบไฟล์ Excel ที่ upload_key นี้'
+        message: 'กรุณานำเข้าข้อมูลรายการบิล'
       });
     }
 
     const attachment = attachments[0];
     const filePath = attachment.file_path;
     const fileExt = attachment.file_ext.toLowerCase();
+
 
     // Step 2: Validate file extension
     if (fileExt !== 'xlsx' && fileExt !== 'xls') {
@@ -311,30 +334,64 @@ export const insertBillWithExcel = async (req, res) => {
     }
 
     // Step 3: Check if file exists
-    if (!fs.existsSync(filePath)) {
+    const fileExists = fs.existsSync(filePath);
+    logger.debug('File exists:', fileExists);
+
+    if (!fileExists) {
       return res.status(404).json({
         success: false,
         error: 'File not found on server',
-        message: 'ไม่พบไฟล์บนเซิร์ฟเวอร์'
+        message: 'ไม่พบไฟล์บนเซิร์ฟเวอร์',
+        debug: { filePath }
       });
     }
+
+    // Debug: ดู file stats
+    const stats = fs.statSync(filePath);
+    logger.debug('File stats:', {
+      size: stats.size,
+      isFile: stats.isFile(),
+      path: filePath
+    });
 
     // Step 4: Read and parse Excel file
     let workbook;
     try {
+      logger.debug('Attempting to read file:', filePath);
       workbook = xlsx.readFile(filePath);
+      logger.debug('Workbook read successfully');
     } catch (error) {
       logger.error('Error reading Excel file:', error);
       return res.status(400).json({
         success: false,
         error: 'Failed to read Excel file',
-        message: 'ไม่สามารถอ่านไฟล์ Excel ได้ ไฟล์อาจเสียหาย'
+        message: 'ไม่สามารถอ่านไฟล์ Excel ได้ ไฟล์อาจเสียหาย',
+        debug: {
+          filePath,
+          errorMessage: error.message
+        }
       });
     }
 
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const data = xlsx.utils.sheet_to_json(worksheet);
+
+    // ตรวจสอบว่าไฟล์เป็น HTML-based Excel หรือไม่
+    if (!worksheet['A1'] && !worksheet['B1'] && !worksheet['C1']) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid Excel file format',
+        message: 'ไฟล์ Excel ไม่ถูกต้อง กรุณาใช้ไฟล์ .xlsx หรือ .xls ที่สร้างจาก Microsoft Excel โดยตรง (ไม่ใช่ไฟล์ที่แปลงมาจาก HTML)',
+        hint: 'ลองเปิดไฟล์ด้วย Microsoft Excel แล้ว Save As เป็น .xlsx ใหม่'
+      });
+    }
+
+    // อ่าน Excel แบบ header: 1 (ใช้ row 1 เป็น header)
+    const data = xlsx.utils.sheet_to_json(worksheet, {
+      defval: null,
+      blankrows: false,
+      raw: false  // แปลง value เป็น string
+    });
 
     // Step 5: Validate Excel data
     if (!data || data.length === 0) {
@@ -344,6 +401,7 @@ export const insertBillWithExcel = async (req, res) => {
         message: 'ไฟล์ Excel ไม่มีข้อมูล'
       });
     }
+
 
     // Validate column headers
     const requiredColumns = ['เลขห้อง', 'ชื่อลูกบ้าน', 'ยอดเงิน'];
@@ -364,31 +422,51 @@ export const insertBillWithExcel = async (req, res) => {
 
     // Validate each row
     const validatedRows = [];
-    const errors = [];
+    const skippedRows = [];
+    const excludedRowsList = []; // เก็บ row ที่ user เลือกลบออก
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
-      const rowNum = i + 2; // Excel row number (header is row 1)
+      const rowNum = i + 1; // ลำดับที่ตรงกับ preview (เริ่มจาก 1)
+
+      // ข้ามแถวที่ user เลือกลบออก (excluded_rows)
+      if (excludedRowsArray.includes(rowNum)) {
+        excludedRowsList.push({
+          row: rowNum,
+          reason: 'ถูกลบออกโดย user'
+        });
+        continue;
+      }
 
       const houseNo = row['เลขห้อง']?.toString().trim();
       const memberName = row['ชื่อลูกบ้าน']?.toString().trim();
-      const totalPrice = parseFloat(row['ยอดเงิน']);
-      const remark = row['หมายเหตุ']?.toString().trim() || null;
+      const totalPriceRaw = row['ยอดเงิน'];
+      const remarkRaw = row['หมายเหตุ'];
 
-      // Validate row data
-      if (!houseNo) {
-        errors.push(`แถว ${rowNum}: ไม่มีเลขห้อง`);
+      // ข้ามแถวที่ไม่มีข้อมูลครบ 3 ฟิลด์หลัก
+      if (!houseNo || !memberName || !totalPriceRaw) {
+        skippedRows.push({
+          row: rowNum,
+          reason: 'ขาดข้อมูลจำเป็น (เลขห้อง, ชื่อลูกบ้าน, หรือยอดเงิน)'
+        });
         continue;
       }
 
-      if (!memberName) {
-        errors.push(`แถว ${rowNum}: ไม่มีชื่อลูกบ้าน`);
-        continue;
-      }
+      const totalPrice = parseFloat(totalPriceRaw);
 
+      // ตรวจสอบว่ายอดเงินเป็นตัวเลขหรือไม่
       if (isNaN(totalPrice)) {
-        errors.push(`แถว ${rowNum}: ยอดเงินต้องเป็นตัวเลข`);
+        skippedRows.push({
+          row: rowNum,
+          reason: 'ยอดเงินไม่ใช่ตัวเลข'
+        });
         continue;
+      }
+
+      // remark: ถ้ามีค่าแล้วเป็น string ว่างหรือ null ให้เป็น null
+      let remark = null;
+      if (remarkRaw && remarkRaw.toString().trim() !== '') {
+        remark = remarkRaw.toString().trim();
       }
 
       validatedRows.push({
@@ -399,25 +477,19 @@ export const insertBillWithExcel = async (req, res) => {
       });
     }
 
-    if (errors.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Excel validation failed',
-        message: 'พบข้อผิดพลาดในไฟล์ Excel',
-        errors: errors
-      });
-    }
-
     if (validatedRows.length === 0) {
       return res.status(400).json({
         success: false,
         error: 'No valid data',
-        message: 'ไม่มีข้อมูลที่ถูกต้องในไฟล์ Excel'
+        message: 'ไม่มีข้อมูลที่ถูกต้องในไฟล์ Excel',
+        skipped_rows: skippedRows,
+        total_skipped: skippedRows.length
       });
     }
 
+
     // Step 6: Start Transaction
-    await db.execute('START TRANSACTION');
+    await db.query('START TRANSACTION');
 
     try {
       // Step 7: Insert bill_information
@@ -444,7 +516,7 @@ export const insertBillWithExcel = async (req, res) => {
 
       const billId = billResult.insertId;
 
-      // Step 8: Generate initial bill_no
+      // Step 8: Generate initial bill_no with row locking
       const now = new Date();
       const year = now.getFullYear();
       const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -452,15 +524,17 @@ export const insertBillWithExcel = async (req, res) => {
       const datePrefix = `${month}${day}`;
       const pattern = `INV-${year}-${datePrefix}-%`;
 
+      // ใช้ FOR UPDATE เพื่อ lock row ป้องกัน race condition
       const lastBillNoQuery = `
         SELECT bill_no
         FROM bill_room_information
         WHERE bill_no LIKE ? AND customer_id = ?
         ORDER BY bill_no DESC
         LIMIT 1
+        FOR UPDATE
       `;
 
-      const [lastRows] = await db.execute(lastBillNoQuery, [pattern, customer_id?.trim()]);
+      const [lastRows] = await db.query(lastBillNoQuery, [pattern, customer_id?.trim()]);
 
       let runNumber = 0;
 
@@ -501,10 +575,11 @@ export const insertBillWithExcel = async (req, res) => {
         VALUES ${billRoomValues.join(', ')}
       `;
 
-      await db.execute(billRoomInsertQuery, billRoomParams);
+      // ใช้ query() แทน execute() เพราะ dynamic values
+      await db.query(billRoomInsertQuery, billRoomParams);
 
       // Step 10: Commit Transaction
-      await db.execute('COMMIT');
+      await db.query('COMMIT');
 
       res.json({
         success: true,
@@ -512,6 +587,10 @@ export const insertBillWithExcel = async (req, res) => {
         data: {
           bill_id: billId,
           total_rooms_inserted: validatedRows.length,
+          total_rows_excluded: excludedRowsList.length,
+          total_rows_skipped: skippedRows.length,
+          excluded_rows: excludedRowsList.length > 0 ? excludedRowsList : undefined,
+          skipped_rows: skippedRows.length > 0 ? skippedRows : undefined,
           upload_key,
           title,
           customer_id
@@ -521,7 +600,7 @@ export const insertBillWithExcel = async (req, res) => {
 
     } catch (error) {
       // Rollback on error
-      await db.execute('ROLLBACK');
+      await db.query('ROLLBACK');
       throw error;
     }
 
@@ -623,6 +702,224 @@ export const getBillList = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch bills',
+      message: error.message
+    });
+  }
+};
+
+export const getBillExcelList = async (req, res) => {
+  try {
+    const { upload_key } = req.query;
+
+    if (!upload_key) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ upload_key',
+        required: ['upload_key']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Step 1: Query Excel file from bill_attachment
+    const attachmentQuery = `
+      SELECT file_path, file_name, file_ext
+      FROM bill_attachment
+      WHERE upload_key = ? AND status != 2
+      ORDER BY create_date DESC
+      LIMIT 1
+    `;
+
+    const [attachments] = await db.execute(attachmentQuery, [upload_key.trim()]);
+
+    if (attachments.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Excel file not found',
+        message: 'กรุณานำเข้าข้อมูลรายการบิล'
+      });
+    }
+
+    const attachment = attachments[0];
+    const filePath = attachment.file_path;
+    const fileExt = attachment.file_ext.toLowerCase();
+
+    // Step 2: Validate file extension
+    if (fileExt !== 'xlsx' && fileExt !== 'xls') {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid file type',
+        message: 'ไฟล์ต้องเป็น Excel (.xlsx หรือ .xls) เท่านั้น'
+      });
+    }
+
+    // Step 3: Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found on server',
+        message: 'ไม่พบไฟล์บนเซิร์ฟเวอร์'
+      });
+    }
+
+    // Step 4: Read and parse Excel file
+    let workbook;
+    try {
+      workbook = xlsx.readFile(filePath);
+    } catch (error) {
+      logger.error('Error reading Excel file:', error);
+      return res.status(400).json({
+        success: false,
+        error: 'Failed to read Excel file',
+        message: 'ไม่สามารถอ่านไฟล์ Excel ได้ ไฟล์อาจเสียหาย'
+      });
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+
+    // ตรวจสอบว่าไฟล์เป็น HTML-based Excel หรือไม่
+    if (!worksheet['A1'] && !worksheet['B1'] && !worksheet['C1']) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid Excel file format',
+        message: 'ไฟล์ Excel ไม่ถูกต้อง กรุณาใช้ไฟล์ .xlsx หรือ .xls ที่สร้างจาก Microsoft Excel โดยตรง',
+        hint: 'ลองเปิดไฟล์ด้วย Microsoft Excel แล้ว Save As เป็น .xlsx ใหม่'
+      });
+    }
+
+    // อ่าน Excel
+    const data = xlsx.utils.sheet_to_json(worksheet, {
+      defval: null,
+      blankrows: false,
+      raw: false
+    });
+
+    // Step 5: Validate Excel data
+    if (!data || data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Excel file is empty',
+        message: 'ไฟล์ Excel ไม่มีข้อมูล'
+      });
+    }
+
+    // Validate column headers
+    const requiredColumns = ['เลขห้อง', 'ชื่อลูกบ้าน', 'ยอดเงิน'];
+    const firstRow = data[0];
+    const actualColumns = Object.keys(firstRow);
+    const missingColumns = requiredColumns.filter(col => !(col in firstRow));
+
+    if (missingColumns.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required columns',
+        message: `ไฟล์ Excel ต้องมี columns: ${missingColumns.join(', ')}`,
+        missing_columns: missingColumns,
+        actual_columns: actualColumns
+      });
+    }
+
+    // Step 6: Process and validate each row
+    const items = [];
+    let validCount = 0;
+    let invalidCount = 0;
+    let totalPriceSum = 0; // รวมยอดเงินของแถวที่ถูกต้อง
+
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNum = i + 1; // ลำดับที่แสดงใน UI (เริ่มจาก 1)
+
+      const houseNoRaw = row['เลขห้อง'];
+      const memberNameRaw = row['ชื่อลูกบ้าน'];
+      const totalPriceRaw = row['ยอดเงิน'];
+      const remarkRaw = row['หมายเหตุ'];
+
+      // ตรวจสอบความถูกต้องของ 3 ฟิลด์หลัก
+      const houseNo = houseNoRaw?.toString().trim();
+      const memberName = memberNameRaw?.toString().trim();
+      const totalPriceStr = totalPriceRaw?.toString().trim();
+
+      let status = 1; // default: ถูกต้อง
+      let errorMessage = null;
+
+      // ตรวจสอบว่ามีข้อมูลครบหรือไม่
+      const isHouseNoMissing = !houseNo;
+      const isMemberNameMissing = !memberName;
+      const isTotalPriceMissing = !totalPriceStr;
+
+      if (isHouseNoMissing || isMemberNameMissing || isTotalPriceMissing) {
+        status = 0;
+        errorMessage = 'ขาดข้อมูลจำเป็น (เลขห้อง, ชื่อลูกบ้าน, หรือยอดเงิน)';
+        invalidCount++;
+      } else {
+        // ตรวจสอบว่ายอดเงินเป็นตัวเลขหรือไม่
+        const priceValue = parseFloat(totalPriceStr);
+        if (isNaN(priceValue)) {
+          status = 0;
+          errorMessage = 'ยอดเงินไม่ใช่ตัวเลข';
+          invalidCount++;
+        } else {
+          validCount++;
+          totalPriceSum += priceValue; // รวมยอดเงินของแถวที่ถูกต้อง
+        }
+      }
+
+      // จัดรูปแบบข้อมูลสำหรับแสดง UI
+      const item = {
+        row_number: rowNum,
+        house_no: isHouseNoMissing ? 'ไม่ระบุ' : houseNo,
+        member_name: isMemberNameMissing ? 'ไม่ระบุ' : memberName,
+        total_price: isTotalPriceMissing ? 'ไม่ระบุ' : totalPriceStr,
+        remark: remarkRaw?.toString().trim() || '-',
+        status: status
+      };
+
+      if (errorMessage) {
+        item.error_message = errorMessage;
+      }
+
+      items.push(item);
+    }
+
+    // Format numbers with comma
+    const formatNumber = (num) => {
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    };
+
+    const formatPrice = (num) => {
+      // ตรวจสอบว่าเป็นจำนวนเต็มหรือไม่
+      const isInteger = num % 1 === 0;
+
+      if (isInteger) {
+        // ถ้าเป็นจำนวนเต็ม ไม่แสดงทศนิยม
+        const formatted = num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return `฿${formatted}`;
+      } else {
+        // ถ้ามีทศนิยม แสดงทศนิยม 2 ตำแหน่ง
+        const formatted = num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return `฿${formatted}`;
+      }
+    };
+
+    res.json({
+      success: true,
+      data: {
+        total_rows: formatNumber(data.length),
+        valid_rows: formatNumber(validCount),
+        invalid_rows: formatNumber(invalidCount),
+        total_price: formatPrice(totalPriceSum),
+        items: items
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill excel list error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill excel list',
       message: error.message
     });
   }
