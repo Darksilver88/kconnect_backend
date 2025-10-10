@@ -35,7 +35,7 @@ const storage = multer.diskStorage({
 
 const fileFilter = async (req, file, cb) => {
   try {
-    const allowedFileTypes = await getConfig('allowed_file_types') || ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip', 'rar'];
+    const allowedFileTypes = await getConfig('allowed_file_types') || ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip', 'rar', 'xls', 'xlsx'];
     const fileExt = path.extname(file.originalname).slice(1).toLowerCase();
 
     if (allowedFileTypes.includes(fileExt)) {
@@ -62,22 +62,13 @@ export const createUploadMiddleware = async () => {
 };
 
 // Default export for backward compatibility
+// Uses async fileFilter with fallback values
 export const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB as fallback (will be validated in controller)
+    fileSize: 50 * 1024 * 1024 // 50MB as fallback
   },
-  fileFilter: (req, file, cb) => {
-    // Basic validation, detailed validation in controller
-    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt|zip|rar/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-
-    if (extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Invalid file type'));
-    }
-  }
+  fileFilter: fileFilter
 });
 
 export async function saveFileAttachments(files, uploadKey, userId, tableName) {
