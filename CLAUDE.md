@@ -26,6 +26,7 @@ npm start
 **Configuration**: Environment variables via dotenv
 **Pattern**: MVC with feature-based folder structure
 **Logging**: Winston logger with daily file rotation
+**Excel Processing**: xlsx library for Excel import/export
 
 ### Project Structure
 ```
@@ -38,13 +39,19 @@ kconnect_backend/
 │   ├── testData.js       # Test data routes
 │   ├── news.js           # News routes
 │   ├── room.js           # Room routes
-│   └── member.js         # Member routes
+│   ├── member.js         # Member routes
+│   ├── bill.js           # Bill routes
+│   ├── billType.js       # Bill Type routes
+│   └── billRoom.js       # Bill Room routes
 ├── controllers/
 │   ├── testDataController.js  # Test data & table creation
 │   ├── newsController.js      # News business logic
 │   ├── uploadController.js    # File upload business logic
 │   ├── roomController.js      # Room business logic
-│   └── memberController.js    # Member business logic
+│   ├── memberController.js    # Member business logic
+│   ├── billController.js      # Bill business logic
+│   ├── billTypeController.js  # Bill Type business logic
+│   └── billRoomController.js  # Bill Room business logic
 ├── middleware/
 │   ├── errorHandler.js   # Error handling middleware
 │   └── logger.js         # Request logging middleware
@@ -81,9 +88,13 @@ MySQL connection configured via .env file:
 - `GET /api/test-data/insert_data` - Insert random data into test_list table
 - `GET /api/test-data/list_data` - Fetch all data from test_list table
 - `GET /api/test-data/create_news_attachment` - Create news_attachment table
+- `GET /api/test-data/create_bill_attachment` - Create bill_attachment table
 - `GET /api/test-data/create_app_config` - Create and initialize app_config table
 - `GET /api/test-data/create_room_information` - Create room_information table
 - `GET /api/test-data/create_member_information` - Create member_information table
+- `GET /api/test-data/create_bill_information` - Create bill_information table
+- `GET /api/test-data/create_bill_room_information` - Create bill_room_information table
+- `GET /api/test-data/create_bill_type_information` - Create bill_type_information table
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -103,6 +114,21 @@ MySQL connection configured via .env file:
 ### Member API
 - `POST /api/member/insert` - Insert member (requires: upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, uid)
 - `GET /api/member/list` - List members with pagination (requires: customer_id)
+
+### Bill API
+- `POST /api/bill/insert` - Insert bill (requires: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid)
+- `POST /api/bill/insert_with_excel` - Insert bill with Excel import (reads Excel from bill_attachment, creates bill + bill_room records)
+- `PUT /api/bill/update` - Update bill (requires: id, title, detail, expire_date, status, uid)
+- `DELETE /api/bill/delete` - Soft delete bill (set status=2)
+- `GET /api/bill/list` - List bills with pagination (requires: customer_id)
+- `GET /api/bill/{id}` - Get single bill by ID with bill_type details
+
+### Bill Type API
+- `GET /api/bill-type/list` - List bill types with pagination
+
+### Bill Room API
+- `POST /api/bill-room/insert` - Insert bill room (requires: bill_id, house_no, member_name, total_price, customer_id, status, uid)
+- `GET /api/bill-room/list` - List bill rooms with pagination (requires: customer_id)
 
 ### File Upload API
 - `POST /api/upload_file` - Upload files to specific module (menu + upload_key)
@@ -203,6 +229,53 @@ MySQL connection configured via .env file:
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
 
+**bill_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `title` - VARCHAR(255) NOT NULL
+- `bill_type_id` - INT NOT NULL (references bill_type_information.id)
+- `detail` - TEXT NOT NULL
+- `expire_date` - TIMESTAMP NOT NULL
+- `send_date` - TIMESTAMP NULL (auto-set when status=1)
+- `remark` - TEXT NULL
+- `customer_id` - VARCHAR(50) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
+**bill_type_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `title` - VARCHAR(255) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
+**bill_room_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `bill_id` - INT NOT NULL (references bill_information.id)
+- `bill_no` - VARCHAR(50) NOT NULL (auto-generated format: INV-YYYY-MMDD-NNN)
+- `house_no` - VARCHAR(50) NOT NULL
+- `member_name` - VARCHAR(255) NOT NULL
+- `total_price` - DECIMAL(10,2) NOT NULL
+- `remark` - TEXT NULL
+- `customer_id` - VARCHAR(50) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
 ### API Parameters
 
 **News API:**
@@ -231,6 +304,41 @@ MySQL connection configured via .env file:
 - **List**: `?page=1&limit=10&status=1&keyword=search&user_level=xxx&user_type=xxx&customer_id=xxx&room_id=1` via `/api/member/list`
   - Required: customer_id
   - Optional: page, limit, status, keyword, user_level, user_type, room_id
+
+**Bill API:**
+- **Insert**: `{upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid, remark?}` via `/api/bill/insert`
+  - Required: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid
+  - Optional: remark
+  - Note: send_date is auto-set to current date when status=1
+- **Insert with Excel**: `{upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid}` via `/api/bill/insert_with_excel`
+  - Reads Excel file from bill_attachment table using upload_key
+  - Excel must contain columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน (required), หมายเหตุ (optional)
+  - Creates bill_information + batch inserts bill_room_information with remark
+  - Uses transaction for data consistency
+- **Update**: `{id, title, detail, expire_date, status, uid, remark?}` via `/api/bill/update`
+  - Required: id, title, detail, expire_date, status, uid
+  - Optional: remark
+  - Note: send_date is set to current date if status changes to 1 and send_date is null
+- **Delete**: `{id, uid}` via `/api/bill/delete`
+- **List**: `?page=1&limit=10&status=1&keyword=search&bill_type_id=1&customer_id=xxx` via `/api/bill/list`
+  - Required: customer_id
+  - Optional: page, limit, status, keyword, bill_type_id
+- **Detail**: `/api/bill/{id}` - Returns bill with bill_type details joined
+
+**Bill Type API:**
+- **List**: `?page=1&limit=100&status=1&keyword=search` via `/api/bill-type/list`
+  - All parameters optional
+  - Default limit: 100
+
+**Bill Room API:**
+- **Insert**: `{bill_id, house_no, member_name, total_price, customer_id, status, uid, remark?}` via `/api/bill-room/insert`
+  - Required: bill_id, house_no, member_name, total_price, customer_id, status, uid
+  - Optional: remark
+  - Note: bill_no is auto-generated (format: INV-YYYY-MMDD-NNN)
+- **List**: `?page=1&limit=10&status=1&keyword=search&bill_id=1&customer_id=xxx` via `/api/bill-room/list`
+  - Required: customer_id
+  - Optional: page, limit, status, keyword, bill_id
+  - Response includes: remark field
 
 **File Upload API:**
 - **Upload**: `{upload_key, menu}` + files via form-data to `/api/upload_file`
@@ -262,6 +370,26 @@ MySQL connection configured via .env file:
 - **Status**: `status` - filter by status (default: excludes deleted records with status=2)
 - **Pagination**: `page`, `limit` - standard pagination
 
+**Bill List Filters:**
+- **Search**: `keyword` - searches in title, detail (LIKE %keyword%)
+- **Bill Type**: `bill_type_id` - filter by bill type ID (0 = all types)
+- **Customer**: `customer_id` - REQUIRED - filter by customer ID
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Pagination**: `page`, `limit` - standard pagination
+- **Joined Data**: Returns bill_type_title from bill_type_information table
+
+**Bill Type List Filters:**
+- **Search**: `keyword` - searches in title (LIKE %keyword%)
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Pagination**: `page`, `limit` - standard pagination (default limit: 100)
+
+**Bill Room List Filters:**
+- **Search**: `keyword` - searches in bill_no, house_no, member_name (LIKE %keyword%)
+- **Bill**: `bill_id` - filter by bill ID (0 = all bills)
+- **Customer**: `customer_id` - REQUIRED - filter by customer ID
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Pagination**: `page`, `limit` - standard pagination
+
 ### Date Formatting
 
 All list and detail endpoints return dates in two formats:
@@ -272,7 +400,7 @@ All list and detail endpoints return dates in two formats:
 - Uses Thai Buddhist Era (พ.ศ.) - adds 543 years to Gregorian year
 - Uses Thai month names (มกราคม, กุมภาพันธ์, etc.)
 - Format: `{day} {month_thai} {year_buddhist} {HH}:{mm}:{ss}`
-- Automatically applied to: `create_date`, `update_date`, `delete_date`, `enter_date` (member only)
+- Automatically applied to: `create_date`, `update_date`, `delete_date`, `enter_date` (member only), `expire_date`, `send_date` (bill only)
 
 **Implementation**:
 ```javascript
@@ -329,6 +457,16 @@ const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date
 - **Soft Deletes**: All deletions set `status=2` instead of removing records
 - **Upload Key Pattern**: 32-character keys used to link attachments to content
 - **Dynamic Config**: Runtime configuration stored in `app_config` table via `utils/config.js`
+- **Transaction Support**: Excel import uses MySQL transactions for data consistency
+- **Auto-Generated Fields**:
+  - `bill_no` - Auto-generated invoice number (format: INV-YYYY-MMDD-NNN)
+  - `send_date` - Auto-set to current timestamp when bill status changes to 1
+- **Excel Import**: Bill system supports importing bill_room data from Excel files with validation
+  - Required columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน
+  - Optional columns: หมายเหตุ
+  - Validates file type (.xlsx, .xls only)
+  - Row-by-row validation with detailed error messages
+  - Batch insert with transaction rollback on error
 
 ## Configuration System
 

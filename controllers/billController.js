@@ -346,8 +346,9 @@ export const insertBillWithExcel = async (req, res) => {
     }
 
     // Validate column headers
-    const requiredColumns = ['เลขที่ห้อง', 'ชื่อลูกบ้าน', 'ยอดเงิน'];
+    const requiredColumns = ['เลขห้อง', 'ชื่อลูกบ้าน', 'ยอดเงิน'];
     const firstRow = data[0];
+    const actualColumns = Object.keys(firstRow);
     const missingColumns = requiredColumns.filter(col => !(col in firstRow));
 
     if (missingColumns.length > 0) {
@@ -355,7 +356,9 @@ export const insertBillWithExcel = async (req, res) => {
         success: false,
         error: 'Missing required columns',
         message: `ไฟล์ Excel ต้องมี columns: ${missingColumns.join(', ')}`,
-        missing_columns: missingColumns
+        missing_columns: missingColumns,
+        actual_columns: actualColumns,
+        debug_info: `คาดหวัง: [${requiredColumns.join(', ')}], พบ: [${actualColumns.join(', ')}]`
       });
     }
 
@@ -367,13 +370,14 @@ export const insertBillWithExcel = async (req, res) => {
       const row = data[i];
       const rowNum = i + 2; // Excel row number (header is row 1)
 
-      const houseNo = row['เลขที่ห้อง']?.toString().trim();
+      const houseNo = row['เลขห้อง']?.toString().trim();
       const memberName = row['ชื่อลูกบ้าน']?.toString().trim();
       const totalPrice = parseFloat(row['ยอดเงิน']);
+      const remark = row['หมายเหตุ']?.toString().trim() || null;
 
       // Validate row data
       if (!houseNo) {
-        errors.push(`แถว ${rowNum}: ไม่มีเลขที่ห้อง`);
+        errors.push(`แถว ${rowNum}: ไม่มีเลขห้อง`);
         continue;
       }
 
@@ -390,7 +394,8 @@ export const insertBillWithExcel = async (req, res) => {
       validatedRows.push({
         house_no: houseNo,
         member_name: memberName,
-        total_price: totalPrice
+        total_price: totalPrice,
+        remark: remark
       });
     }
 
@@ -477,13 +482,14 @@ export const insertBillWithExcel = async (req, res) => {
         const currentRunNumber = (runNumber + i) % 1000;
         const billNo = `INV-${year}-${datePrefix}-${String(currentRunNumber).padStart(3, '0')}`;
 
-        billRoomValues.push('(?, ?, ?, ?, ?, ?, ?, ?)');
+        billRoomValues.push('(?, ?, ?, ?, ?, ?, ?, ?, ?)');
         billRoomParams.push(
           billId,
           billNo,
           rowData.house_no,
           rowData.member_name,
           rowData.total_price,
+          rowData.remark,
           customer_id?.trim(),
           0, // status = 0
           -1  // create_by = -1
@@ -491,7 +497,7 @@ export const insertBillWithExcel = async (req, res) => {
       }
 
       const billRoomInsertQuery = `
-        INSERT INTO bill_room_information (bill_id, bill_no, house_no, member_name, total_price, customer_id, status, create_by)
+        INSERT INTO bill_room_information (bill_id, bill_no, house_no, member_name, total_price, remark, customer_id, status, create_by)
         VALUES ${billRoomValues.join(', ')}
       `;
 

@@ -43,7 +43,7 @@ async function generateBillNo(db, customer_id) {
 
 export const insertBillRoom = async (req, res) => {
   try {
-    const { bill_id, house_no, member_name, total_price, customer_id, status, uid } = req.body;
+    const { bill_id, house_no, member_name, total_price, remark, customer_id, status, uid } = req.body;
 
     if (!bill_id || !house_no || !member_name || total_price === undefined || !customer_id || status === undefined || !uid) {
       return res.status(400).json({
@@ -60,8 +60,8 @@ export const insertBillRoom = async (req, res) => {
     const billNo = await generateBillNo(db, customer_id);
 
     const insertQuery = `
-      INSERT INTO ${TABLE_INFORMATION} (bill_id, bill_no, house_no, member_name, total_price, customer_id, status, create_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ${TABLE_INFORMATION} (bill_id, bill_no, house_no, member_name, total_price, remark, customer_id, status, create_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const billIdValue = parseInt(bill_id);
@@ -73,6 +73,7 @@ export const insertBillRoom = async (req, res) => {
       house_no?.trim(),
       member_name?.trim(),
       totalPriceValue,
+      remark?.trim() || null,
       customer_id?.trim(),
       status,
       uid
@@ -88,6 +89,7 @@ export const insertBillRoom = async (req, res) => {
         house_no,
         member_name,
         total_price: totalPriceValue,
+        remark,
         customer_id,
         status,
         create_by: uid
@@ -155,7 +157,7 @@ export const getBillRoomList = async (req, res) => {
     const total = countResult[0].total;
 
     const dataQuery = `
-      SELECT id, bill_id, bill_no, house_no, member_name, total_price, customer_id, status,
+      SELECT id, bill_id, bill_no, house_no, member_name, total_price, remark, customer_id, status,
              create_date, create_by, update_date, update_by, delete_date, delete_by
       FROM ${TABLE_INFORMATION}
       ${whereClause}
