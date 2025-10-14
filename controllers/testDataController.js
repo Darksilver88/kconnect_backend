@@ -433,6 +433,7 @@ export const createBillInformation = async (req, res) => {
       CREATE TABLE IF NOT EXISTS bill_information (
         id INT AUTO_INCREMENT PRIMARY KEY,
         upload_key CHAR(32) NOT NULL,
+        bill_no VARCHAR(50) NULL,
         title VARCHAR(255) NOT NULL,
         bill_type_id INT NOT NULL,
         detail TEXT NOT NULL,
@@ -462,6 +463,7 @@ export const createBillInformation = async (req, res) => {
         fields: [
           'id',
           'upload_key',
+          'bill_no',
           'title',
           'bill_type_id',
           'detail',
@@ -638,6 +640,50 @@ export const createBillTypeInformation = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to create bill type information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBillStatusTransaction = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_status_transaction_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        bill_id INT NOT NULL,
+        status INT NOT NULL,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bill_status_transaction_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bill status transaction table created successfully',
+      data: {
+        table_name: 'bill_status_transaction_information',
+        table_created: true,
+        fields: [
+          'id',
+          'bill_id',
+          'status',
+          'create_date',
+          'create_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill status transaction table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill status transaction table',
       message: error.message
     });
   }

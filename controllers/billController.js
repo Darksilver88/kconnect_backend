@@ -1,11 +1,30 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { formatNumber, formatPrice } from '../utils/numberFormatter.js';
 import xlsx from 'xlsx';
 import fs from 'fs';
 
 const MENU = 'bill';
 const TABLE_INFORMATION = `${MENU}_information`;
+const TABLE_STATUS_TRANSACTION = 'bill_status_transaction_information';
+
+/**
+ * Helper function to insert bill status log
+ * @param {Object} db - Database connection
+ * @param {number} billId - Bill ID
+ * @param {number} status - Status value
+ * @param {number} userId - User ID who made the change
+ */
+async function insertBillStatusLog(db, billId, status, userId) {
+  const insertLogQuery = `
+    INSERT INTO ${TABLE_STATUS_TRANSACTION} (bill_id, status, create_by)
+    VALUES (?, ?, ?)
+  `;
+
+  await db.execute(insertLogQuery, [billId, status, userId]);
+  logger.debug(`Bill status log inserted: bill_id=${billId}, status=${status}, user=${userId}`);
+}
 
 export const insertBill = async (req, res) => {
   try {
@@ -44,6 +63,9 @@ export const insertBill = async (req, res) => {
       status,
       uid
     ]);
+
+    // Insert bill status log
+    await insertBillStatusLog(db, result.insertId, parseInt(status), uid);
 
     res.json({
       success: true,
@@ -130,6 +152,11 @@ export const updateBill = async (req, res) => {
 
     const [result] = await db.execute(updateQuery, queryParams);
 
+    // Insert bill status log if status changed
+    if (currentStatus !== parseInt(status)) {
+      await insertBillStatusLog(db, parseInt(id), parseInt(status), uid);
+    }
+
     res.json({
       success: true,
       message: 'Bill updated successfully',
@@ -151,6 +178,156 @@ export const updateBill = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to update bill',
+      message: error.message
+    });
+  }
+};
+
+export const sendBill = async (req, res) => {
+  try {
+    const { id, uid } = req.body;
+
+    if (!id || !uid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, uid',
+        required: ['id', 'uid']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Check if bill exists and status is 0
+    const checkQuery = `SELECT status FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    const [currentRows] = await db.execute(checkQuery, [id]);
+
+    if (currentRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill not found',
+        message: 'ไม่พบข้อมูลบิล'
+      });
+    }
+
+    const currentStatus = currentRows[0].status;
+
+    // Update status from 0 or 3 to 1 and set send_date
+    const updateQuery = `
+      UPDATE ${TABLE_INFORMATION}
+      SET status = 1, send_date = NOW(), update_date = NOW(), update_by = ?
+      WHERE id = ? AND status IN (0, 3)
+    `;
+
+    const [result] = await db.execute(updateQuery, [uid, id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot send bill',
+        message: currentStatus === 1
+          ? 'บิลนี้ถูกส่งไปแล้ว'
+          : 'บิลนี้ไม่สามารถส่งได้ ต้องมี status = 0 หรือ 3 เท่านั้น'
+      });
+    }
+
+    // Insert bill status log
+    await insertBillStatusLog(db, parseInt(id), 1, uid);
+
+    logger.info(`User ${uid} sent bill ID: ${id}`);
+
+    res.json({
+      success: true,
+      message: 'Bill sent successfully',
+      data: {
+        id: parseInt(id),
+        status: 1,
+        send_date_updated: true,
+        update_by: uid
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Send bill error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send bill',
+      message: error.message
+    });
+  }
+};
+
+export const cancelSendBill = async (req, res) => {
+  try {
+    const { id, uid } = req.body;
+
+    if (!id || !uid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, uid',
+        required: ['id', 'uid']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Check if bill exists and status is 1
+    const checkQuery = `SELECT status FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    const [currentRows] = await db.execute(checkQuery, [id]);
+
+    if (currentRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill not found',
+        message: 'ไม่พบข้อมูลบิล'
+      });
+    }
+
+    const currentStatus = currentRows[0].status;
+
+    // Update status from 1 to 3 and remove send_date
+    const updateQuery = `
+      UPDATE ${TABLE_INFORMATION}
+      SET status = 3, send_date = NULL, update_date = NOW(), update_by = ?
+      WHERE id = ? AND status = 1
+    `;
+
+    const [result] = await db.execute(updateQuery, [uid, id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot cancel send bill',
+        message: currentStatus === 0
+          ? 'บิลนี้ยังไม่ได้ถูกส่ง'
+          : 'บิลนี้ไม่สามารถยกเลิกการส่งได้ ต้องมี status = 1 เท่านั้น'
+      });
+    }
+
+    // Insert bill status log
+    await insertBillStatusLog(db, parseInt(id), 3, uid);
+
+    logger.info(`User ${uid} canceled send bill ID: ${id}`);
+
+    res.json({
+      success: true,
+      message: 'Bill send canceled successfully',
+      data: {
+        id: parseInt(id),
+        status: 3,
+        send_date_removed: true,
+        update_by: uid
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Cancel send bill error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to cancel send bill',
       message: error.message
     });
   }
@@ -186,6 +363,9 @@ export const deleteBill = async (req, res) => {
         message: 'ไม่พบข้อมูลบิล'
       });
     }
+
+    // Insert bill status log
+    await insertBillStatusLog(db, parseInt(id), 2, uid);
 
     logger.info(`User ${uid} deleted bill ID: ${id}`);
 
@@ -225,12 +405,16 @@ export const getBillDetail = async (req, res) => {
     const db = getDatabase();
 
     const query = `
-      SELECT b.id, b.upload_key, b.title, b.bill_type_id, b.detail, b.expire_date, b.send_date, b.remark, b.customer_id, b.status,
+      SELECT b.id, b.upload_key, b.bill_no, b.title, b.bill_type_id, b.detail, b.expire_date, b.send_date, b.remark, b.customer_id, b.status,
              b.create_date, b.create_by, b.update_date, b.update_by, b.delete_date, b.delete_by,
-             bt.title as bill_type_title
+             bt.title as bill_type_title,
+             COUNT(br.id) as total_room,
+             COALESCE(SUM(br.total_price), 0) as total_price
       FROM ${TABLE_INFORMATION} b
       LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+      LEFT JOIN bill_room_information br ON br.bill_id = b.id AND br.status != 2
       WHERE b.id = ? AND b.status != 2
+      GROUP BY b.id
     `;
 
     const [rows] = await db.execute(query, [id]);
@@ -245,6 +429,11 @@ export const getBillDetail = async (req, res) => {
 
     // Add formatted dates (including expire_date and send_date)
     const formattedData = addFormattedDates(rows[0], ['create_date', 'update_date', 'delete_date', 'expire_date', 'send_date']);
+
+    // Format total_price with comma, smart decimal, and ฿ prefix
+    if (formattedData.total_price !== undefined && formattedData.total_price !== null) {
+      formattedData.total_price = formatPrice(parseFloat(formattedData.total_price));
+    }
 
     res.json({
       success: true,
@@ -325,11 +514,11 @@ export const insertBillWithExcel = async (req, res) => {
 
 
     // Step 2: Validate file extension
-    if (fileExt !== 'xlsx' && fileExt !== 'xls') {
+    if (fileExt !== 'xlsx' && fileExt !== 'xls' && fileExt !== 'csv') {
       return res.status(400).json({
         success: false,
         error: 'Invalid file type',
-        message: 'ไฟล์ต้องเป็น Excel (.xlsx หรือ .xls) เท่านั้น'
+        message: 'ไฟล์ต้องเป็น Excel (.xlsx, .xls) หรือ CSV (.csv) เท่านั้น'
       });
     }
 
@@ -354,18 +543,24 @@ export const insertBillWithExcel = async (req, res) => {
       path: filePath
     });
 
-    // Step 4: Read and parse Excel file
+    // Step 4: Read and parse Excel/CSV file
     let workbook;
     try {
       logger.debug('Attempting to read file:', filePath);
-      workbook = xlsx.readFile(filePath);
+      // สำหรับ CSV ต้องอ่านด้วย UTF-8 encoding
+      if (fileExt === 'csv') {
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        workbook = xlsx.read(fileContent, { type: 'string', codepage: 65001 });
+      } else {
+        workbook = xlsx.readFile(filePath);
+      }
       logger.debug('Workbook read successfully');
     } catch (error) {
-      logger.error('Error reading Excel file:', error);
+      logger.error('Error reading file:', error);
       return res.status(400).json({
         success: false,
-        error: 'Failed to read Excel file',
-        message: 'ไม่สามารถอ่านไฟล์ Excel ได้ ไฟล์อาจเสียหาย',
+        error: 'Failed to read file',
+        message: 'ไม่สามารถอ่านไฟล์ได้ ไฟล์อาจเสียหาย',
         debug: {
           filePath,
           errorMessage: error.message
@@ -376,8 +571,8 @@ export const insertBillWithExcel = async (req, res) => {
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
-    // ตรวจสอบว่าไฟล์เป็น HTML-based Excel หรือไม่
-    if (!worksheet['A1'] && !worksheet['B1'] && !worksheet['C1']) {
+    // ตรวจสอบว่าไฟล์เป็น HTML-based Excel หรือไม่ (ข้ามการเช็คสำหรับ CSV)
+    if (fileExt !== 'csv' && !worksheet['A1'] && !worksheet['B1'] && !worksheet['C1']) {
       return res.status(400).json({
         success: false,
         error: 'Invalid Excel file format',
@@ -386,19 +581,19 @@ export const insertBillWithExcel = async (req, res) => {
       });
     }
 
-    // อ่าน Excel แบบ header: 1 (ใช้ row 1 เป็น header)
+    // อ่าน Excel/CSV แบบ header: 1 (ใช้ row 1 เป็น header)
     const data = xlsx.utils.sheet_to_json(worksheet, {
       defval: null,
       blankrows: false,
       raw: false  // แปลง value เป็น string
     });
 
-    // Step 5: Validate Excel data
+    // Step 5: Validate file data
     if (!data || data.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Excel file is empty',
-        message: 'ไฟล์ Excel ไม่มีข้อมูล'
+        error: 'File is empty',
+        message: 'ไฟล์ไม่มีข้อมูล'
       });
     }
 
@@ -413,7 +608,7 @@ export const insertBillWithExcel = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required columns',
-        message: `ไฟล์ Excel ต้องมี columns: ${missingColumns.join(', ')}`,
+        message: `ไฟล์ต้องมี columns: ${missingColumns.join(', ')}`,
         missing_columns: missingColumns,
         actual_columns: actualColumns,
         debug_info: `คาดหวัง: [${requiredColumns.join(', ')}], พบ: [${actualColumns.join(', ')}]`
@@ -481,7 +676,7 @@ export const insertBillWithExcel = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'No valid data',
-        message: 'ไม่มีข้อมูลที่ถูกต้องในไฟล์ Excel',
+        message: 'ไม่มีข้อมูลที่ถูกต้องในไฟล์',
         skipped_rows: skippedRows,
         total_skipped: skippedRows.length
       });
@@ -492,18 +687,52 @@ export const insertBillWithExcel = async (req, res) => {
     await db.query('START TRANSACTION');
 
     try {
-      // Step 7: Insert bill_information
+      // Step 7: Generate bill_no for bill_information
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const datePrefix = `${month}${day}`;
+      const billPattern = `BILL-${year}-${datePrefix}-%`;
+
+      // Query last bill_no with row locking
+      const lastBillQuery = `
+        SELECT bill_no
+        FROM ${TABLE_INFORMATION}
+        WHERE bill_no LIKE ? AND customer_id = ?
+        ORDER BY bill_no DESC
+        LIMIT 1
+        FOR UPDATE
+      `;
+
+      const [lastBillRows] = await db.query(lastBillQuery, [billPattern, customer_id?.trim()]);
+
+      let billRunNumber = 0;
+
+      if (lastBillRows.length > 0) {
+        const lastBillNo = lastBillRows[0].bill_no;
+        const parts = lastBillNo.split('-');
+        if (parts.length === 4) {
+          const lastRunNumber = parseInt(parts[3]);
+          billRunNumber = (lastRunNumber + 1) % 1000;
+        }
+      }
+
+      const generatedBillNo = `BILL-${year}-${datePrefix}-${String(billRunNumber).padStart(3, '0')}`;
+
+      // Step 8: Insert bill_information
       const sendDate = parseInt(status) === 1 ? new Date() : null;
 
       const billInsertQuery = `
-        INSERT INTO ${TABLE_INFORMATION} (upload_key, title, bill_type_id, detail, expire_date, send_date, customer_id, status, create_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ${TABLE_INFORMATION} (upload_key, bill_no, title, bill_type_id, detail, expire_date, send_date, customer_id, status, create_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const billTypeIdValue = parseInt(bill_type_id);
 
       const [billResult] = await db.execute(billInsertQuery, [
         upload_key?.trim(),
+        generatedBillNo,
         title?.trim(),
         billTypeIdValue,
         detail?.trim(),
@@ -516,12 +745,10 @@ export const insertBillWithExcel = async (req, res) => {
 
       const billId = billResult.insertId;
 
-      // Step 8: Generate initial bill_no with row locking
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const datePrefix = `${month}${day}`;
+      // Insert bill status log
+      await insertBillStatusLog(db, billId, parseInt(status), uid);
+
+      // Step 9: Generate initial bill_no for bill_room_information with row locking
       const pattern = `INV-${year}-${datePrefix}-%`;
 
       // ใช้ FOR UPDATE เพื่อ lock row ป้องกัน race condition
@@ -547,7 +774,7 @@ export const insertBillWithExcel = async (req, res) => {
         }
       }
 
-      // Step 9: Batch INSERT bill_room_information
+      // Step 10: Batch INSERT bill_room_information
       const billRoomValues = [];
       const billRoomParams = [];
 
@@ -565,8 +792,8 @@ export const insertBillWithExcel = async (req, res) => {
           rowData.total_price,
           rowData.remark,
           customer_id?.trim(),
-          0, // status = 0
-          -1  // create_by = -1
+          1, // status = 1 (default active)
+          uid  // create_by = uid
         );
       }
 
@@ -578,7 +805,7 @@ export const insertBillWithExcel = async (req, res) => {
       // ใช้ query() แทน execute() เพราะ dynamic values
       await db.query(billRoomInsertQuery, billRoomParams);
 
-      // Step 10: Commit Transaction
+      // Step 11: Commit Transaction
       await db.query('COMMIT');
 
       res.json({
@@ -586,6 +813,7 @@ export const insertBillWithExcel = async (req, res) => {
         message: 'Bill and bill rooms inserted successfully',
         data: {
           bill_id: billId,
+          bill_no: generatedBillNo,
           total_rooms_inserted: validatedRows.length,
           total_rows_excluded: excludedRowsList.length,
           total_rows_skipped: skippedRows.length,
@@ -642,11 +870,17 @@ export const getBillList = async (req, res) => {
       queryParams.push(parseInt(status));
     }
 
-    // Keyword search (title, detail)
+    // Keyword search (title, detail, dates)
     if (keyword && keyword.trim() !== '') {
-      whereClause += ' AND (b.title LIKE ? OR b.detail LIKE ?)';
+      whereClause += ` AND (
+        b.title LIKE ?
+        OR b.detail LIKE ?
+        OR DATE_FORMAT(b.expire_date, '%d/%m/%Y') LIKE ?
+        OR DATE_FORMAT(b.send_date, '%d/%m/%Y') LIKE ?
+        OR DATE_FORMAT(b.create_date, '%d/%m/%Y') LIKE ?
+      )`;
       const searchTerm = `%${keyword.trim()}%`;
-      queryParams.push(searchTerm, searchTerm);
+      queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
     }
 
     // Bill type filter
@@ -668,12 +902,16 @@ export const getBillList = async (req, res) => {
     const total = countResult[0].total;
 
     const dataQuery = `
-      SELECT b.id, b.upload_key, b.title, b.bill_type_id, b.detail, b.expire_date, b.send_date, b.remark, b.customer_id, b.status,
+      SELECT b.id, b.upload_key, b.bill_no, b.title, b.bill_type_id, b.detail, b.expire_date, b.send_date, b.remark, b.customer_id, b.status,
              b.create_date, b.create_by, b.update_date, b.update_by, b.delete_date, b.delete_by,
-             bt.title as bill_type_title
+             bt.title as bill_type_title,
+             COUNT(br.id) as total_room,
+             COALESCE(SUM(br.total_price), 0) as total_price
       FROM ${TABLE_INFORMATION} b
       LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+      LEFT JOIN bill_room_information br ON br.bill_id = b.id AND br.status != 2
       ${whereClause}
+      GROUP BY b.id
       ORDER BY b.create_date DESC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
@@ -682,6 +920,13 @@ export const getBillList = async (req, res) => {
 
     // Add formatted dates (including expire_date and send_date)
     const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date', 'delete_date', 'expire_date', 'send_date']);
+
+    // Format total_price with comma, smart decimal, and ฿ prefix
+    formattedRows.forEach(row => {
+      if (row.total_price !== undefined && row.total_price !== null) {
+        row.total_price = formatPrice(parseFloat(row.total_price));
+      }
+    });
 
     res.json({
       success: true,
@@ -702,6 +947,343 @@ export const getBillList = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch bills',
+      message: error.message
+    });
+  }
+};
+
+export const getBillRoomList = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, keyword, bill_id, status } = req.query;
+
+    if (!bill_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ bill_id',
+        required: ['bill_id']
+      });
+    }
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    const db = getDatabase();
+
+    // Get bill information (including expire_date and detail)
+    const billQuery = `
+      SELECT title, detail, create_date, send_date, expire_date, status
+      FROM ${TABLE_INFORMATION}
+      WHERE id = ? AND status != 2
+    `;
+    const [billRows] = await db.execute(billQuery, [parseInt(bill_id)]);
+
+    if (billRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill not found',
+        message: 'ไม่พบข้อมูลบิล'
+      });
+    }
+
+    const billInfo = billRows[0];
+    const expireDate = new Date(billInfo.expire_date);
+    const currentDate = new Date();
+    const isOverdue = currentDate > expireDate;
+
+    // Build WHERE clause for bill_room_information
+    let whereClause = 'WHERE bill_id = ? AND status != 2';
+    let queryParams = [parseInt(bill_id)];
+
+    // Status filter
+    // status = -1 or undefined or '': แสดงทั้งหมด
+    // status = 0: ยังไม่ชำระ (ยังไม่เลยกำหนด)
+    // status = 1: ชำระแล้ว
+    // status = 3: เลยกำหนดชำระ (จริงๆ ใน DB เป็น 0 แต่เลย expire_date แล้ว)
+    if (status !== undefined && status !== '' && parseInt(status) !== -1) {
+      const statusNum = parseInt(status);
+
+      if (statusNum === 0) {
+        // แสดงเฉพาะ status = 0 ที่ยังไม่เลยกำหนด
+        whereClause += ' AND status = 0';
+        if (isOverdue) {
+          // ถ้าเลยกำหนดแล้ว ไม่มีรายการ status = 0 ที่ยังไม่เลยกำหนด
+          // ใส่เงื่อนไขที่จะไม่มีข้อมูลเลย
+          whereClause += ' AND 1 = 0';
+        }
+      } else if (statusNum === 1) {
+        // แสดงเฉพาะ status = 1 (ชำระแล้ว)
+        whereClause += ' AND status = 1';
+      } else if (statusNum === 3) {
+        // แสดงเฉพาะ status = 0 ที่เลยกำหนดแล้ว
+        whereClause += ' AND status = 0';
+        if (!isOverdue) {
+          // ถ้ายังไม่เลยกำหนด ไม่มีรายการ status = 3
+          whereClause += ' AND 1 = 0';
+        }
+      }
+    }
+
+    // Keyword search (house_no and member_name only)
+    if (keyword && keyword.trim() !== '') {
+      whereClause += ` AND (
+        house_no LIKE ?
+        OR member_name LIKE ?
+      )`;
+      const searchTerm = `%${keyword.trim()}%`;
+      queryParams.push(searchTerm, searchTerm);
+    }
+
+    // Count total and sum price
+    const countQuery = `
+      SELECT COUNT(*) as total, COALESCE(SUM(total_price), 0) as total_price_sum
+      FROM bill_room_information
+      ${whereClause}
+    `;
+    const [countResult] = await db.execute(countQuery, queryParams);
+    const totalCount = countResult[0].total;
+    const totalPriceSum = countResult[0].total_price_sum;
+
+    // Get summary data by status (without keyword and status filters - show all)
+    const summaryQuery = `
+      SELECT
+        COUNT(CASE WHEN status = 1 THEN 1 END) as status_1,
+        COUNT(CASE WHEN status = 0 THEN 1 END) as status_0,
+        COALESCE(SUM(CASE WHEN status = 1 THEN total_price ELSE 0 END), 0) as paid
+      FROM bill_room_information
+      WHERE bill_id = ? AND status != 2
+    `;
+    const [summaryResult] = await db.execute(summaryQuery, [parseInt(bill_id)]);
+    const summary = summaryResult[0];
+
+    // Count status_3 (overdue: status=0 and current date > expire_date)
+    // isOverdue already calculated above (line 993)
+    const status_3 = isOverdue ? summary.status_0 : 0;
+
+    // Get data with pagination
+    const dataQuery = `
+      SELECT id, bill_id, bill_no, house_no, member_name, total_price, remark, status,
+             create_date, create_by
+      FROM bill_room_information
+      ${whereClause}
+      ORDER BY create_date ASC
+      LIMIT ${limitNum} OFFSET ${offset}
+    `;
+
+    const [rows] = await db.execute(dataQuery, queryParams);
+
+    // Format dates for items and adjust status for overdue items
+    const formattedRows = addFormattedDatesToList(rows, ['create_date']).map(row => {
+      // If status = 0 and current date > expire_date, change status to 3
+      if (row.status === 0 && isOverdue) {
+        row.status = 3;
+      }
+      return row;
+    });
+
+    // Format bill info dates (including expire_date)
+    const formattedBillInfo = addFormattedDates(billInfo, ['create_date', 'send_date', 'expire_date']);
+
+    res.json({
+      success: true,
+      data: {
+        bill_info: formattedBillInfo,
+        summary_data: {
+          status_1: summary.status_1,
+          status_0: summary.status_0,
+          status_3: status_3,
+          paid: formatPrice(summary.paid)
+        },
+        total_rows: formatNumber(totalCount),
+        valid_rows: formatNumber(totalCount),
+        invalid_rows: formatNumber(0),
+        total_price: formatPrice(totalPriceSum),
+        items: formattedRows
+      },
+      pagination: {
+        current_page: pageNum,
+        per_page: limitNum,
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / limitNum),
+        has_next: pageNum * limitNum < totalCount,
+        has_prev: pageNum > 1
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill room list error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill room list',
+      message: error.message
+    });
+  }
+};
+
+export const getSummaryData = async (req, res) => {
+  try {
+    const { customer_id } = req.query;
+
+    if (!customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ customer_id',
+        required: ['customer_id']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Get current month range (start and end of month)
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Card 1: บิลในระบบ (Total bills in system)
+    const billCountQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION}
+      WHERE customer_id = ? AND status != 2
+    `;
+    const [billCountResult] = await db.execute(billCountQuery, [customer_id]);
+    const totalBills = billCountResult[0].total;
+
+    // Card 1: บิลที่สร้างในเดือนนี้
+    const billThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION}
+      WHERE customer_id = ? AND status != 2
+        AND create_date >= ? AND create_date <= ?
+    `;
+    const [billThisMonthResult] = await db.execute(billThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const billsThisMonth = billThisMonthResult[0].total;
+
+    // Card 2: บิลที่แจ้งแล้ว (Sent bills - status = 1)
+    const sentBillQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION}
+      WHERE customer_id = ? AND status = 1
+    `;
+    const [sentBillResult] = await db.execute(sentBillQuery, [customer_id]);
+    const totalSentBills = sentBillResult[0].total;
+
+    // Card 2: บิลที่แจ้งในเดือนนี้
+    const sentBillThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION}
+      WHERE customer_id = ? AND status = 1
+        AND send_date >= ? AND send_date <= ?
+    `;
+    const [sentBillThisMonthResult] = await db.execute(sentBillThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const sentBillsThisMonth = sentBillThisMonthResult[0].total;
+
+    // Card 3: รอการชำระ (Pending payment - bill_room_information.status = 0)
+    const pendingPaymentQuery = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND b.status != 2 AND br.status = 0
+    `;
+    const [pendingPaymentResult] = await db.execute(pendingPaymentQuery, [customer_id]);
+    const totalPendingPayment = pendingPaymentResult[0].total;
+
+    // Card 3: รายการรอชำระที่สร้างในเดือนนี้
+    const pendingPaymentThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND b.status != 2 AND br.status = 0
+        AND br.create_date >= ? AND br.create_date <= ?
+    `;
+    const [pendingPaymentThisMonthResult] = await db.execute(pendingPaymentThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const pendingPaymentThisMonth = pendingPaymentThisMonthResult[0].total;
+
+    // Card 4: ชำระเรียบร้อย (Paid - bill_room_information.status = 1)
+    const paidQuery = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND b.status != 2 AND br.status = 1
+    `;
+    const [paidResult] = await db.execute(paidQuery, [customer_id]);
+    const totalPaid = paidResult[0].total;
+
+    // Card 4: รายการที่ชำระในเดือนนี้
+    const paidThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND b.status != 2 AND br.status = 1
+        AND br.create_date >= ? AND br.create_date <= ?
+    `;
+    const [paidThisMonthResult] = await db.execute(paidThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const paidThisMonth = paidThisMonthResult[0].total;
+
+    // Card 5: ห้องทั้งหมด (Total unique rooms)
+    const totalRoomsQuery = `
+      SELECT COUNT(DISTINCT br.house_no) as total
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2
+    `;
+    const [totalRoomsResult] = await db.execute(totalRoomsQuery, [customer_id]);
+    const totalRooms = totalRoomsResult[0].total;
+
+    // Card 5: ห้องที่เพิ่มขึ้นในเดือนนี้
+    const newRoomsThisMonthQuery = `
+      SELECT COUNT(DISTINCT br.house_no) as total
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2
+        AND br.create_date >= ? AND br.create_date <= ?
+    `;
+    const [newRoomsThisMonthResult] = await db.execute(newRoomsThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const newRoomsThisMonth = newRoomsThisMonthResult[0].total;
+
+    // Calculate percentage for rooms (new rooms / total rooms * 100)
+    const roomsPercentage = totalRooms > 0 ? Math.round((newRoomsThisMonth / totalRooms) * 100) : 0;
+
+    res.json({
+      success: true,
+      data: {
+        total_bills: {
+          count: totalBills,
+          change: billsThisMonth,
+          change_text: billsThisMonth > 0 ? `+${billsThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        sent_bills: {
+          count: totalSentBills,
+          change: sentBillsThisMonth,
+          change_text: sentBillsThisMonth > 0 ? `+${sentBillsThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        pending_payment: {
+          count: totalPendingPayment,
+          change: pendingPaymentThisMonth,
+          change_text: pendingPaymentThisMonth > 0 ? `+${pendingPaymentThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        paid: {
+          count: totalPaid,
+          change: paidThisMonth,
+          change_text: paidThisMonth > 0 ? `+${paidThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        total_rooms: {
+          count: totalRooms,
+          change: newRoomsThisMonth,
+          change_percentage: roomsPercentage,
+          change_text: roomsPercentage > 0 ? `+${roomsPercentage}% เดือนนี้` : `0% เดือนนี้`
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get summary data error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch summary data',
       message: error.message
     });
   }
@@ -746,11 +1328,11 @@ export const getBillExcelList = async (req, res) => {
     const fileExt = attachment.file_ext.toLowerCase();
 
     // Step 2: Validate file extension
-    if (fileExt !== 'xlsx' && fileExt !== 'xls') {
+    if (fileExt !== 'xlsx' && fileExt !== 'xls' && fileExt !== 'csv') {
       return res.status(400).json({
         success: false,
         error: 'Invalid file type',
-        message: 'ไฟล์ต้องเป็น Excel (.xlsx หรือ .xls) เท่านั้น'
+        message: 'ไฟล์ต้องเป็น Excel (.xlsx, .xls) หรือ CSV (.csv) เท่านั้น'
       });
     }
 
@@ -763,24 +1345,30 @@ export const getBillExcelList = async (req, res) => {
       });
     }
 
-    // Step 4: Read and parse Excel file
+    // Step 4: Read and parse Excel/CSV file
     let workbook;
     try {
-      workbook = xlsx.readFile(filePath);
+      // สำหรับ CSV ต้องอ่านด้วย UTF-8 encoding
+      if (fileExt === 'csv') {
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        workbook = xlsx.read(fileContent, { type: 'string', codepage: 65001 });
+      } else {
+        workbook = xlsx.readFile(filePath);
+      }
     } catch (error) {
-      logger.error('Error reading Excel file:', error);
+      logger.error('Error reading file:', error);
       return res.status(400).json({
         success: false,
-        error: 'Failed to read Excel file',
-        message: 'ไม่สามารถอ่านไฟล์ Excel ได้ ไฟล์อาจเสียหาย'
+        error: 'Failed to read file',
+        message: 'ไม่สามารถอ่านไฟล์ได้ ไฟล์อาจเสียหาย'
       });
     }
 
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
-    // ตรวจสอบว่าไฟล์เป็น HTML-based Excel หรือไม่
-    if (!worksheet['A1'] && !worksheet['B1'] && !worksheet['C1']) {
+    // ตรวจสอบว่าไฟล์เป็น HTML-based Excel หรือไม่ (ข้ามการเช็คสำหรับ CSV)
+    if (fileExt !== 'csv' && !worksheet['A1'] && !worksheet['B1'] && !worksheet['C1']) {
       return res.status(400).json({
         success: false,
         error: 'Invalid Excel file format',
@@ -789,19 +1377,19 @@ export const getBillExcelList = async (req, res) => {
       });
     }
 
-    // อ่าน Excel
+    // อ่าน Excel/CSV
     const data = xlsx.utils.sheet_to_json(worksheet, {
       defval: null,
       blankrows: false,
       raw: false
     });
 
-    // Step 5: Validate Excel data
+    // Step 5: Validate file data
     if (!data || data.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Excel file is empty',
-        message: 'ไฟล์ Excel ไม่มีข้อมูล'
+        error: 'File is empty',
+        message: 'ไฟล์ไม่มีข้อมูล'
       });
     }
 
@@ -815,7 +1403,7 @@ export const getBillExcelList = async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'Missing required columns',
-        message: `ไฟล์ Excel ต้องมี columns: ${missingColumns.join(', ')}`,
+        message: `ไฟล์ต้องมี columns: ${missingColumns.join(', ')}`,
         missing_columns: missingColumns,
         actual_columns: actualColumns
       });
@@ -882,26 +1470,6 @@ export const getBillExcelList = async (req, res) => {
 
       items.push(item);
     }
-
-    // Format numbers with comma
-    const formatNumber = (num) => {
-      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    };
-
-    const formatPrice = (num) => {
-      // ตรวจสอบว่าเป็นจำนวนเต็มหรือไม่
-      const isInteger = num % 1 === 0;
-
-      if (isInteger) {
-        // ถ้าเป็นจำนวนเต็ม ไม่แสดงทศนิยม
-        const formatted = num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-        return `฿${formatted}`;
-      } else {
-        // ถ้ามีทศนิยม แสดงทศนิยม 2 ตำแหน่ง
-        const formatted = num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-        return `฿${formatted}`;
-      }
-    };
 
     res.json({
       success: true,

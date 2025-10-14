@@ -1,7 +1,7 @@
 /**
- * Format date to Thai Buddhist calendar format
+ * Format date to DD/MM/YYYY HH:mm:ss format
  * @param {Date|string} date - Date object or ISO string
- * @returns {string} Formatted date string (e.g., "8 ตุลาคม 2568 16:27:32")
+ * @returns {string} Formatted date string (e.g., "08/10/2025 16:27:32")
  */
 export function formatThaiDate(date) {
   if (!date) return null;
@@ -10,19 +10,14 @@ export function formatThaiDate(date) {
 
   if (isNaN(d.getTime())) return null;
 
-  const thaiMonths = [
-    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
-  ];
-
-  const day = d.getDate();
-  const month = thaiMonths[d.getMonth()];
-  const year = d.getFullYear() + 543; // Convert to Buddhist Era
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
   const hours = String(d.getHours()).padStart(2, '0');
   const minutes = String(d.getMinutes()).padStart(2, '0');
   const seconds = String(d.getSeconds()).padStart(2, '0');
 
-  return `${day} ${month} ${year} ${hours}:${minutes}:${seconds}`;
+  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
 }
 
 /**

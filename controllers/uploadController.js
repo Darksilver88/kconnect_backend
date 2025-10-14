@@ -3,6 +3,28 @@ import path from 'path';
 import logger from '../utils/logger.js';
 import { getConfig } from '../utils/config.js';
 
+/**
+ * Decode filename to handle both Postman (UTF-8) and Browser (latin1) encoding
+ * @param {string} filename - Original filename from multer
+ * @returns {string} Properly decoded filename
+ */
+function decodeFilename(filename) {
+  // Check if filename already contains Thai characters (Unicode range ก-๙)
+  const hasThaiChars = /[\u0E00-\u0E7F]/.test(filename);
+
+  if (hasThaiChars) {
+    // Already UTF-8 (from Postman)
+    return filename;
+  } else {
+    // Need to decode from latin1 to utf8 (from Browser)
+    try {
+      return Buffer.from(filename, 'latin1').toString('utf8');
+    } catch (error) {
+      return filename; // fallback to original
+    }
+  }
+}
+
 export const uploadFiles = async (req, res) => {
   try {
     const { upload_key, menu } = req.body;
@@ -78,6 +100,9 @@ export const uploadFiles = async (req, res) => {
 
     // Validate each file
     for (const file of files) {
+      // Decode filename to handle both Postman and Browser encoding
+      const decodedFilename = decodeFilename(file.originalname);
+
       // Check file size
       if (file.size > maxFileSize) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
@@ -85,9 +110,9 @@ export const uploadFiles = async (req, res) => {
         return res.status(400).json({
           success: false,
           error: 'File too large',
-          message: `ไฟล์ '${file.originalname}' มีขนาด ${fileSizeMB}MB เกินขนาดสูงสุดที่กำหนด ${maxFileSizeMB}MB`,
+          message: `ไฟล์ '${decodedFilename}' มีขนาด ${fileSizeMB}MB เกินขนาดสูงสุดที่กำหนด ${maxFileSizeMB}MB`,
           details: {
-            filename: file.originalname,
+            filename: decodedFilename,
             file_size: file.size,
             max_size_mb: maxFileSizeMB
           }
@@ -95,14 +120,14 @@ export const uploadFiles = async (req, res) => {
       }
 
       // Check file type
-      const fileExt = path.extname(file.originalname).slice(1).toLowerCase();
+      const fileExt = path.extname(decodedFilename).slice(1).toLowerCase();
       if (!allowedFileTypes.includes(fileExt)) {
         return res.status(400).json({
           success: false,
           error: 'Invalid file type',
           message: `ไม่รองรับไฟล์ประเภท '.${fileExt}' ประเภทที่รองรับ: ${allowedFileTypes.join(', ')}`,
           details: {
-            filename: file.originalname,
+            filename: decodedFilename,
             file_extension: fileExt,
             allowed_types: allowedFileTypes
           }
@@ -115,11 +140,14 @@ export const uploadFiles = async (req, res) => {
     const domain = process.env.DOMAIN || 'http://localhost:3000';
 
     for (const file of files) {
+      // Decode filename to handle both Postman and Browser encoding
+      const decodedFilename = decodeFilename(file.originalname);
+
       const fileInfo = {
         upload_key: upload_key,
-        file_name: file.originalname,
+        file_name: decodedFilename,
         file_size: file.size,
-        file_ext: path.extname(file.originalname).slice(1),
+        file_ext: path.extname(decodedFilename).slice(1),
         file_path: file.path,
         create_by: 1 // Default user, should be from auth
       };

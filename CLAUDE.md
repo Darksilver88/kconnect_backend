@@ -59,7 +59,8 @@ kconnect_backend/
 │   ├── fileUpload.js     # File upload helpers & multer config
 │   ├── logger.js         # Winston logger configuration
 │   ├── config.js         # Dynamic config from database
-│   └── dateFormatter.js  # Thai date formatting utilities
+│   ├── dateFormatter.js  # Date formatting utilities (DD/MM/YYYY HH:mm:ss)
+│   └── numberFormatter.js # Number formatting utilities (comma, currency)
 ├── logs/                 # Log files (auto-created)
 └── uploads/              # Uploaded files (auto-created)
     └── {menu}/           # Organized by menu/module
@@ -95,6 +96,7 @@ MySQL connection configured via .env file:
 - `GET /api/test-data/create_bill_information` - Create bill_information table
 - `GET /api/test-data/create_bill_room_information` - Create bill_room_information table
 - `GET /api/test-data/create_bill_type_information` - Create bill_type_information table
+- `GET /api/test-data/create_bill_status_transaction` - Create bill_status_transaction_information table
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -120,6 +122,8 @@ MySQL connection configured via .env file:
 - `GET /api/bill/bill_excel_list` - Preview Excel bill data before import (requires: upload_key)
 - `POST /api/bill/insert_with_excel` - Insert bill with Excel import (reads Excel from bill_attachment, creates bill + bill_room records, supports excluded_rows)
 - `PUT /api/bill/update` - Update bill (requires: id, title, detail, expire_date, status, uid)
+- `POST /api/bill/send` - Send bill (set status 0 or 3 to 1, set send_date) (requires: id, uid)
+- `POST /api/bill/cancel_send` - Cancel sent bill (set status 1 to 3, remove send_date) (requires: id, uid)
 - `DELETE /api/bill/delete` - Soft delete bill (set status=2)
 - `GET /api/bill/list` - List bills with pagination (requires: customer_id)
 - `GET /api/bill/{id}` - Get single bill by ID with bill_type details
@@ -233,6 +237,7 @@ MySQL connection configured via .env file:
 **bill_information table:**
 - `id` - INT AUTO_INCREMENT PRIMARY KEY
 - `upload_key` - CHAR(32) NOT NULL
+- `bill_no` - VARCHAR(50) NULL (auto-generated format: BILL-YYYY-MMDD-NNN)
 - `title` - VARCHAR(255) NOT NULL
 - `bill_type_id` - INT NOT NULL (references bill_type_information.id)
 - `detail` - TEXT NOT NULL
@@ -277,6 +282,13 @@ MySQL connection configured via .env file:
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
 
+**bill_status_transaction_information table (audit trail):**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `bill_id` - INT NOT NULL (references bill_information.id)
+- `status` - INT NOT NULL (status value: 0=Draft, 1=Sent, 2=Deleted, 3=Canceled)
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+
 ### API Parameters
 
 **News API:**
@@ -311,35 +323,53 @@ MySQL connection configured via .env file:
   - Required: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid
   - Optional: remark
   - Note: send_date is auto-set to current date when status=1
-- **Preview Excel**: `?upload_key=xxx` via `/api/bill/bill_excel_list`
+- **Preview Excel/CSV**: `?upload_key=xxx` via `/api/bill/bill_excel_list`
   - Required: upload_key
-  - Returns Excel data preview with validation status (no pagination)
+  - Supports: .xlsx, .xls, .csv files
+  - Returns Excel/CSV data preview with validation status (no pagination)
   - Response includes formatted summary: total_rows, valid_rows, invalid_rows, total_price (with comma formatting)
   - Each item includes: row_number, house_no, member_name, total_price, remark, status (1=valid, 0=invalid)
   - Status 0 items include error_message field
   - Number formatting: comma-separated (e.g., "1,000"), total_price with ฿ prefix
   - Decimal formatting: shows .00 only if not integer (e.g., "฿8,300" vs "฿8,300.50")
-- **Insert with Excel**: `{upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid, excluded_rows?}` via `/api/bill/insert_with_excel`
+- **Insert with Excel/CSV**: `{upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid, excluded_rows?}` via `/api/bill/insert_with_excel`
   - Required: upload_key, title, bill_type_id, detail, expire_date, customer_id, status, uid
   - Optional: excluded_rows (array of row_number to skip)
-  - Reads Excel file from bill_attachment table using upload_key
-  - Excel must contain columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน (required), หมายเหตุ (optional)
+  - Supports: .xlsx, .xls, .csv files
+  - Reads Excel/CSV file from bill_attachment table using upload_key
+  - File must contain columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน (required), หมายเหตุ (optional)
+  - Auto-generates bill_no for bill_information (format: BILL-YYYY-MMDD-NNN, per customer_id)
+  - Auto-generates bill_no for each bill_room_information (format: INV-YYYY-MMDD-NNN, per customer_id)
   - Creates bill_information + batch inserts bill_room_information with remark
   - Uses transaction for data consistency
   - Uses FOR UPDATE lock to prevent race condition on bill_no generation
+  - Bill number resets daily based on date pattern (MMDD)
   - Skips rows with missing required fields (เลขห้อง, ชื่อลูกบ้าน, or ยอดเงิน)
   - Skips rows in excluded_rows array (user-selected rows to exclude)
   - excluded_rows supports multiple formats: JSON array `[2,4]`, string `"2,4"`, or `"[2,4]"` (form-data compatible)
-  - Returns summary with: total_rooms_inserted, total_rows_excluded, total_rows_skipped
+  - Returns summary with: bill_id, bill_no, total_rooms_inserted, total_rows_excluded, total_rows_skipped
 - **Update**: `{id, title, detail, expire_date, status, uid, remark?}` via `/api/bill/update`
   - Required: id, title, detail, expire_date, status, uid
   - Optional: remark
   - Note: send_date is set to current date if status changes to 1 and send_date is null
+- **Send**: `{id, uid}` via `/api/bill/send`
+  - Required: id, uid
+  - Updates status from 0 or 3 to 1 (Draft/Canceled → Sent)
+  - Sets send_date to current timestamp
+  - Logs status change in bill_status_transaction table
+- **Cancel Send**: `{id, uid}` via `/api/bill/cancel_send`
+  - Required: id, uid
+  - Updates status from 1 to 3 (Sent → Canceled)
+  - Removes send_date (sets to NULL)
+  - Logs status change in bill_status_transaction table
 - **Delete**: `{id, uid}` via `/api/bill/delete`
 - **List**: `?page=1&limit=10&status=1&keyword=search&bill_type_id=1&customer_id=xxx` via `/api/bill/list`
   - Required: customer_id
   - Optional: page, limit, status, keyword, bill_type_id
+  - Returns: bill_no, bill_type_title, total_room (count), total_price (formatted with ฿ and comma)
+  - Keyword search includes: title, detail, and dates (expire_date, send_date, create_date in DD/MM/YYYY format)
 - **Detail**: `/api/bill/{id}` - Returns bill with bill_type details joined
+  - Returns: bill_no, bill_type_title, total_room (count), total_price (formatted with ฿ and comma)
 
 **Bill Type API:**
 - **List**: `?page=1&limit=100&status=1&keyword=search` via `/api/bill-type/list`
@@ -387,12 +417,15 @@ MySQL connection configured via .env file:
 - **Pagination**: `page`, `limit` - standard pagination
 
 **Bill List Filters:**
-- **Search**: `keyword` - searches in title, detail (LIKE %keyword%)
+- **Search**: `keyword` - searches in title, detail, and dates (LIKE %keyword%)
+  - Searches in: title, detail
+  - Date search: expire_date, send_date, create_date (format: DD/MM/YYYY)
+  - Example: keyword="12" searches for day 12, keyword="2025" searches for year 2025
 - **Bill Type**: `bill_type_id` - filter by bill type ID (0 = all types)
 - **Customer**: `customer_id` - REQUIRED - filter by customer ID
 - **Status**: `status` - filter by status (default: excludes deleted records with status=2)
 - **Pagination**: `page`, `limit` - standard pagination
-- **Joined Data**: Returns bill_type_title from bill_type_information table
+- **Joined Data**: Returns bill_no, bill_type_title, total_room (count), total_price (formatted with ฿)
 
 **Bill Type List Filters:**
 - **Search**: `keyword` - searches in title (LIKE %keyword%)
@@ -410,17 +443,17 @@ MySQL connection configured via .env file:
 
 All list and detail endpoints return dates in two formats:
 - **ISO Format**: Original timestamp field (e.g., `create_date: "2025-10-08T09:27:32.000Z"`)
-- **Thai Format**: Formatted field with `_formatted` suffix (e.g., `create_date_formatted: "8 ตุลาคม 2568 16:27:32"`)
+- **Formatted Date**: Formatted field with `_formatted` suffix (e.g., `create_date_formatted: "08/10/2025 16:27:32"`)
 
 **Formatted Date Fields**:
-- Uses Thai Buddhist Era (พ.ศ.) - adds 543 years to Gregorian year
-- Uses Thai month names (มกราคม, กุมภาพันธ์, etc.)
-- Format: `{day} {month_thai} {year_buddhist} {HH}:{mm}:{ss}`
+- Format: `DD/MM/YYYY HH:mm:ss` (Gregorian calendar)
+- Uses standard date formatting with leading zeros
+- Example: `"08/10/2025 16:27:32"` for October 8, 2025
 - Automatically applied to: `create_date`, `update_date`, `delete_date`, `enter_date` (member only), `expire_date`, `send_date` (bill only)
 
 **Implementation**:
 ```javascript
-import { addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
 
 // For single record
 const formattedRecord = addFormattedDates(record);
@@ -432,14 +465,40 @@ const formattedRows = addFormattedDatesToList(rows);
 const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date', 'delete_date', 'enter_date']);
 ```
 
+### Number Formatting
+
+Number and currency formatting utilities available in `utils/numberFormatter.js`:
+
+**Functions**:
+- `formatNumber(num)` - Adds comma separators (e.g., "1,000")
+- `formatPrice(num)` - Formats as currency with ฿ prefix and smart decimal display
+
+**Smart Decimal Display**:
+- Integer values: `"฿1,500"` (no decimal places)
+- Decimal values: `"฿1,200.06"` (shows 2 decimal places)
+
+**Implementation**:
+```javascript
+import { formatNumber, formatPrice } from '../utils/numberFormatter.js';
+
+const formatted = formatNumber(1000);  // "1,000"
+const price = formatPrice(1500);       // "฿1,500"
+const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
+```
+
+**Usage**:
+- Used in Bill API responses for `total_price` field
+- Used in Excel preview API for summary fields
+
 ### File Upload Support
 
 - **Multiple Files**: Support multiple file uploads via form-data
-- **File Types**: Default: jpeg, jpg, png, gif, pdf, doc, docx, txt, zip, rar (configurable via `app_config.allowed_file_types`)
+- **File Types**: Default: jpeg, jpg, png, gif, pdf, doc, docx, txt, zip, rar, xlsx, xls, csv (configurable via `app_config.allowed_file_types`)
 - **Size Limit**: Default: 10MB per file (configurable via `app_config.max_file_size`)
 - **File Count Limit**: Default: 5 files per upload_key (configurable via `app_config.max_file_count`)
 - **Dynamic Storage**: Files stored in `uploads/{menu}/` based on menu parameter
 - **Table Auto-Detection**: Uses `{menu}_attachment` table structure
+- **Thai Filename Support**: Automatically handles Thai characters in filenames from both Postman (UTF-8) and browsers (latin1 encoding)
 - **Validation**:
   - Checks table existence before upload
   - Validates file size, type, and total file count
@@ -473,26 +532,36 @@ const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date
 - **Soft Deletes**: All deletions set `status=2` instead of removing records
 - **Upload Key Pattern**: 32-character keys used to link attachments to content
 - **Dynamic Config**: Runtime configuration stored in `app_config` table via `utils/config.js`
-- **Transaction Support**: Excel import uses MySQL transactions for data consistency
+- **Transaction Support**: Excel/CSV import uses MySQL transactions for data consistency
 - **Auto-Generated Fields**:
-  - `bill_no` - Auto-generated invoice number (format: INV-YYYY-MMDD-NNN)
+  - `bill_information.bill_no` - Auto-generated bill number (format: BILL-YYYY-MMDD-NNN, per customer_id)
+  - `bill_room_information.bill_no` - Auto-generated invoice number (format: INV-YYYY-MMDD-NNN, per customer_id)
   - `send_date` - Auto-set to current timestamp when bill status changes to 1
+  - Bill numbers reset daily based on date pattern (MMDD)
 - **Race Condition Protection**:
   - Uses `FOR UPDATE` row locking in transactions to prevent duplicate bill_no
   - Safe for concurrent requests from multiple users with same customer_id
   - Ensures sequential bill_no generation even under high load
-- **Excel Import**: Bill system supports importing bill_room data from Excel files with validation and preview
+- **Bill Status Workflow**:
+  - Status meanings: 0=Draft (not sent), 1=Sent (active), 2=Deleted (soft delete), 3=Canceled (was sent, then canceled)
+  - Valid status transitions: 0→1 (send), 1→3 (cancel_send), 3→1 (resend), any→2 (delete)
+  - All status changes are logged in bill_status_transaction_information table for audit trail
+  - Helper function `insertBillStatusLog()` centralizes logging logic across all bill operations
+  - Status logs recorded on: insert, update (if status changed), send, cancel_send, delete, import from Excel
+- **Excel/CSV Import**: Bill system supports importing bill_room data from Excel/CSV files with validation and preview
   - **Preview Flow** (GET /api/bill/bill_excel_list):
-    - Step 1: Upload Excel via `/api/upload_file` (menu=bill) → get upload_key
+    - Step 1: Upload Excel/CSV via `/api/upload_file` (menu=bill) → get upload_key
     - Step 2: Call preview API with upload_key → get validated list with status indicators
     - Step 3: Frontend displays preview with "ลำดับ, เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน, หมายเหตุ, สถานะ, จัดการ" columns
     - Step 4: User can remove rows (valid or invalid) → collect excluded row_numbers
     - Step 5: Call insert API with excluded_rows parameter
-  - **Excel Format**:
+  - **File Format**:
+    - Supported types: .xlsx, .xls, .csv
+    - CSV encoding: UTF-8 (automatically detected and handled)
     - Required columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน
     - Optional columns: หมายเหตุ
   - **Validation**:
-    - Validates file type (.xlsx, .xls only)
+    - Validates file type (.xlsx, .xls, .csv)
     - Detects and rejects HTML-based .xls files (must be native Excel format)
     - Row-by-row validation: marks rows as status=0 (invalid) or status=1 (valid)
     - Invalid rows show error_message, valid rows can still be excluded by user
@@ -502,12 +571,14 @@ const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date
     - total_price with ฿ prefix and smart decimal display (e.g., "฿8,300" or "฿8,300.50")
     - Summary includes: total_rows, valid_rows, invalid_rows, total_price (sum of valid rows only)
   - **Insert Features**:
+    - Auto-generates bill_no for bill_information (BILL-YYYY-MMDD-NNN)
+    - Auto-generates bill_no for each bill_room_information (INV-YYYY-MMDD-NNN)
     - Supports excluded_rows parameter (JSON array, string "2,4", or "[2,4]" for form-data)
     - Skips rows in excluded_rows (user-removed items from preview)
     - Skips rows with missing required fields automatically
     - Batch insert for performance (1 query for multiple rows)
     - Transaction rollback on error
-    - Returns summary: total_rooms_inserted, total_rows_excluded, total_rows_skipped
+    - Returns summary: bill_id, bill_no, total_rooms_inserted, total_rows_excluded, total_rows_skipped
 
 ## Configuration System
 
