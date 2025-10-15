@@ -218,3 +218,145 @@ export const getRoomList = async (req, res) => {
     });
   }
 };
+
+export const getSummaryData = async (req, res) => {
+  try {
+    const { customer_id } = req.query;
+
+    if (!customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ customer_id',
+        required: ['customer_id']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Get current month range (start and end of month)
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Card 1: ห้องที่มีผู้อยู่อาศัย (Total rooms with residents)
+    const roomCountQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION}
+      WHERE customer_id = ? AND status != 2
+    `;
+    const [roomCountResult] = await db.execute(roomCountQuery, [customer_id]);
+    const totalRooms = roomCountResult[0].total;
+
+    // Card 1: ห้องที่สร้างในเดือนนี้
+    const roomThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION}
+      WHERE customer_id = ? AND status != 2
+        AND create_date >= ? AND create_date <= ?
+    `;
+    const [roomThisMonthResult] = await db.execute(roomThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const roomsThisMonth = roomThisMonthResult[0].total;
+
+    // Card 2: ผู้อยู่อาศัยทั้งหมด (Total members)
+    const memberCountQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2
+    `;
+    const [memberCountResult] = await db.execute(memberCountQuery, [customer_id]);
+    const totalMembers = memberCountResult[0].total;
+
+    // Card 2: สมาชิกที่สร้างในเดือนนี้
+    const memberThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2
+        AND create_date >= ? AND create_date <= ?
+    `;
+    const [memberThisMonthResult] = await db.execute(memberThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const membersThisMonth = memberThisMonthResult[0].total;
+
+    // Card 3: เจ้าของห้อง (Owners)
+    const ownerCountQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2 AND user_level = 'owner'
+    `;
+    const [ownerCountResult] = await db.execute(ownerCountQuery, [customer_id]);
+    const totalOwners = ownerCountResult[0].total;
+
+    // Card 3: เจ้าของที่สร้างในเดือนนี้
+    const ownerThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2 AND user_level = 'owner'
+        AND create_date >= ? AND create_date <= ?
+    `;
+    const [ownerThisMonthResult] = await db.execute(ownerThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const ownersThisMonth = ownerThisMonthResult[0].total;
+
+    // Card 4: ผู้เช่า (Renters)
+    const renterCountQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2 AND user_level != 'owner'
+    `;
+    const [renterCountResult] = await db.execute(renterCountQuery, [customer_id]);
+    const totalRenters = renterCountResult[0].total;
+
+    // Card 4: ผู้เช่าที่สร้างในเดือนนี้
+    const renterThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2 AND user_level != 'owner'
+        AND create_date >= ? AND create_date <= ?
+    `;
+    const [renterThisMonthResult] = await db.execute(renterThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const rentersThisMonth = renterThisMonthResult[0].total;
+
+    // Card 5: สมาชิกครอบครัว (Family members - ใช้แบบเดียวกับ card 2 ก่อน)
+    const familyMembersCount = totalMembers;
+    const familyMembersThisMonth = membersThisMonth;
+
+    res.json({
+      success: true,
+      data: {
+        total_rooms: {
+          count: totalRooms,
+          change: roomsThisMonth,
+          change_text: roomsThisMonth > 0 ? `+${roomsThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        total_members: {
+          count: totalMembers,
+          change: membersThisMonth,
+          change_text: membersThisMonth > 0 ? `+${membersThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        total_owners: {
+          count: totalOwners,
+          change: ownersThisMonth,
+          change_text: ownersThisMonth > 0 ? `+${ownersThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        total_renters: {
+          count: totalRenters,
+          change: rentersThisMonth,
+          change_text: rentersThisMonth > 0 ? `+${rentersThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
+        family_members: {
+          count: familyMembersCount,
+          change: familyMembersThisMonth,
+          change_text: familyMembersThisMonth > 0 ? `+${familyMembersThisMonth} เดือนนี้` : `0 เดือนนี้`
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get room summary data error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch room summary data',
+      message: error.message
+    });
+  }
+};

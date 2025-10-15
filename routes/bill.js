@@ -1,6 +1,6 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
-import { insertBill, updateBill, sendBill, cancelSendBill, deleteBill, getBillDetail, getBillList, insertBillWithExcel, getBillExcelList, getBillRoomList, getSummaryData } from '../controllers/billController.js';
+import { insertBill, updateBill, sendBill, cancelSendBill, deleteBill, getBillDetail, getBillList, insertBillWithExcel, getBillExcelList, getBillRoomList, getBillRoomEachList, getSummaryData } from '../controllers/billController.js';
 
 const router = express.Router();
 
@@ -14,6 +14,7 @@ router.delete('/delete', upload.none(), deleteBill);
 router.get('/get_summary_data', getSummaryData);
 router.get('/bill_excel_list', getBillExcelList);
 router.get('/bill_room_list', getBillRoomList);
+router.get('/bill_room_each_list', getBillRoomEachList);
 router.get('/list', getBillList);
 router.get('/:id', getBillDetail);
 

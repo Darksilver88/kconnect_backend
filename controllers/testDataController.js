@@ -368,7 +368,7 @@ export const createMemberInformation = async (req, res) => {
         user_type VARCHAR(50) NOT NULL,
         user_ref VARCHAR(255) NOT NULL,
         member_ref VARCHAR(255) NOT NULL,
-        customer_id VARCHAR(50) NOT NULL,
+        customer_id VARCHAR(255) NOT NULL,
         status INT NOT NULL DEFAULT 1,
         create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         create_by INT NOT NULL,
@@ -440,7 +440,7 @@ export const createBillInformation = async (req, res) => {
         expire_date TIMESTAMP NOT NULL,
         send_date TIMESTAMP NULL,
         remark TEXT NULL,
-        customer_id VARCHAR(50) NOT NULL,
+        customer_id VARCHAR(255) NOT NULL,
         status INT NOT NULL DEFAULT 1,
         create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         create_by INT NOT NULL,
@@ -506,7 +506,7 @@ export const createBillRoomInformation = async (req, res) => {
         member_name VARCHAR(255) NOT NULL,
         total_price DOUBLE NOT NULL,
         remark TEXT NULL,
-        customer_id VARCHAR(50) NOT NULL,
+        customer_id VARCHAR(255) NOT NULL,
         status INT NOT NULL DEFAULT 1,
         create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         create_by INT NOT NULL,
@@ -645,12 +645,12 @@ export const createBillTypeInformation = async (req, res) => {
   }
 };
 
-export const createBillStatusTransaction = async (req, res) => {
+export const createBillAudit = async (req, res) => {
   try {
     const db = getDatabase();
 
     const createTableQuery = `
-      CREATE TABLE IF NOT EXISTS bill_status_transaction_information (
+      CREATE TABLE IF NOT EXISTS bill_audit_information (
         id INT AUTO_INCREMENT PRIMARY KEY,
         bill_id INT NOT NULL,
         status INT NOT NULL,
@@ -660,13 +660,13 @@ export const createBillStatusTransaction = async (req, res) => {
     `;
 
     await db.execute(createTableQuery);
-    logger.info('Table bill_status_transaction_information checked/created');
+    logger.info('Table bill_audit_information checked/created');
 
     res.json({
       success: true,
-      message: 'Bill status transaction table created successfully',
+      message: 'Bill audit table created successfully',
       data: {
-        table_name: 'bill_status_transaction_information',
+        table_name: 'bill_audit_information',
         table_created: true,
         fields: [
           'id',
@@ -680,10 +680,10 @@ export const createBillStatusTransaction = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error('Create bill status transaction table error:', error);
+    logger.error('Create bill audit table error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to create bill status transaction table',
+      error: 'Failed to create bill audit table',
       message: error.message
     });
   }

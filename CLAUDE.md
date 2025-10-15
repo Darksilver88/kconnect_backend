@@ -96,7 +96,7 @@ MySQL connection configured via .env file:
 - `GET /api/test-data/create_bill_information` - Create bill_information table
 - `GET /api/test-data/create_bill_room_information` - Create bill_room_information table
 - `GET /api/test-data/create_bill_type_information` - Create bill_type_information table
-- `GET /api/test-data/create_bill_status_transaction` - Create bill_status_transaction_information table
+- `GET /api/test-data/create_bill_audit` - Create bill_audit_information table
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -127,6 +127,8 @@ MySQL connection configured via .env file:
 - `DELETE /api/bill/delete` - Soft delete bill (set status=2)
 - `GET /api/bill/list` - List bills with pagination (requires: customer_id)
 - `GET /api/bill/{id}` - Get single bill by ID with bill_type details
+- `GET /api/bill/bill_room_list` - List bill rooms with bill information (requires: customer_id, bill_id)
+- `GET /api/bill/bill_room_each_list` - List bills for specific room with summary data (requires: house_no, customer_id)
 
 ### Bill Type API
 - `GET /api/bill-type/list` - List bill types with pagination
@@ -225,7 +227,7 @@ MySQL connection configured via .env file:
 - `user_type` - VARCHAR(50) NOT NULL
 - `user_ref` - VARCHAR(255) NOT NULL
 - `member_ref` - VARCHAR(255) NOT NULL
-- `customer_id` - VARCHAR(50) NOT NULL
+- `customer_id` - VARCHAR(255) NOT NULL
 - `status` - INT NOT NULL DEFAULT 1
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
@@ -244,7 +246,7 @@ MySQL connection configured via .env file:
 - `expire_date` - TIMESTAMP NOT NULL
 - `send_date` - TIMESTAMP NULL (auto-set when status=1)
 - `remark` - TEXT NULL
-- `customer_id` - VARCHAR(50) NOT NULL
+- `customer_id` - VARCHAR(255) NOT NULL
 - `status` - INT NOT NULL DEFAULT 1
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
@@ -273,7 +275,7 @@ MySQL connection configured via .env file:
 - `member_name` - VARCHAR(255) NOT NULL
 - `total_price` - DECIMAL(10,2) NOT NULL
 - `remark` - TEXT NULL
-- `customer_id` - VARCHAR(50) NOT NULL
+- `customer_id` - VARCHAR(255) NOT NULL
 - `status` - INT NOT NULL DEFAULT 1
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
@@ -282,7 +284,7 @@ MySQL connection configured via .env file:
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
 
-**bill_status_transaction_information table (audit trail):**
+**bill_audit_information table (audit trail):**
 - `id` - INT AUTO_INCREMENT PRIMARY KEY
 - `bill_id` - INT NOT NULL (references bill_information.id)
 - `status` - INT NOT NULL (status value: 0=Draft, 1=Sent, 2=Deleted, 3=Canceled)
@@ -356,12 +358,12 @@ MySQL connection configured via .env file:
   - Required: id, uid
   - Updates status from 0 or 3 to 1 (Draft/Canceled → Sent)
   - Sets send_date to current timestamp
-  - Logs status change in bill_status_transaction table
+  - Logs status change in bill_audit_information table
 - **Cancel Send**: `{id, uid}` via `/api/bill/cancel_send`
   - Required: id, uid
   - Updates status from 1 to 3 (Sent → Canceled)
   - Removes send_date (sets to NULL)
-  - Logs status change in bill_status_transaction table
+  - Logs status change in bill_audit_information table
 - **Delete**: `{id, uid}` via `/api/bill/delete`
 - **List**: `?page=1&limit=10&status=1&keyword=search&bill_type_id=1&customer_id=xxx` via `/api/bill/list`
   - Required: customer_id
@@ -370,6 +372,20 @@ MySQL connection configured via .env file:
   - Keyword search includes: title, detail, and dates (expire_date, send_date, create_date in DD/MM/YYYY format)
 - **Detail**: `/api/bill/{id}` - Returns bill with bill_type details joined
   - Returns: bill_no, bill_type_title, total_room (count), total_price (formatted with ฿ and comma)
+- **Bill Room List**: `?page=1&limit=10&customer_id=xxx&bill_id=1` via `/api/bill/bill_room_list`
+  - Required: customer_id, bill_id
+  - Optional: page, limit
+  - Returns bill information with bill_type details and paginated list of bill_room_information
+  - Response includes: bill_info object with bill_type_id, bill_type_title, and items array
+- **Bill Room Each List**: `?page=1&limit=10&house_no=xxx&customer_id=xxx` via `/api/bill/bill_room_each_list`
+  - Required: house_no, customer_id
+  - Optional: page, limit
+  - Returns summary data and paginated list of bills for specific room
+  - Response structure:
+    - summary_data: pending_amount (count of status=0), payment_completion (format: "3/5 ครั้ง (60%)"), next_payment_date (earliest expire_date of pending bills, format: DD/MM/YYYY)
+    - items: expire_date (DD/MM/YYYY), bill_no, bill_title, total_price (฿ formatted), status (dynamic: 0→3 if overdue)
+  - Order by: expire_date DESC (newest expire_date first)
+  - Dynamic status: If status=0 and current_date > expire_date, returns status=3 (overdue)
 
 **Bill Type API:**
 - **List**: `?page=1&limit=100&status=1&keyword=search` via `/api/bill-type/list`
@@ -545,8 +561,8 @@ const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
 - **Bill Status Workflow**:
   - Status meanings: 0=Draft (not sent), 1=Sent (active), 2=Deleted (soft delete), 3=Canceled (was sent, then canceled)
   - Valid status transitions: 0→1 (send), 1→3 (cancel_send), 3→1 (resend), any→2 (delete)
-  - All status changes are logged in bill_status_transaction_information table for audit trail
-  - Helper function `insertBillStatusLog()` centralizes logging logic across all bill operations
+  - All status changes are logged in bill_audit_information table for audit trail
+  - Helper function `insertBillAudit()` centralizes logging logic across all bill operations
   - Status logs recorded on: insert, update (if status changed), send, cancel_send, delete, import from Excel
 - **Excel/CSV Import**: Bill system supports importing bill_room data from Excel/CSV files with validation and preview
   - **Preview Flow** (GET /api/bill/bill_excel_list):

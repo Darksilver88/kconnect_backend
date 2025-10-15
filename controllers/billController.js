@@ -7,23 +7,23 @@ import fs from 'fs';
 
 const MENU = 'bill';
 const TABLE_INFORMATION = `${MENU}_information`;
-const TABLE_STATUS_TRANSACTION = 'bill_status_transaction_information';
+const TABLE_AUDIT = 'bill_audit_information';
 
 /**
- * Helper function to insert bill status log
+ * Helper function to insert bill audit log
  * @param {Object} db - Database connection
  * @param {number} billId - Bill ID
  * @param {number} status - Status value
  * @param {number} userId - User ID who made the change
  */
-async function insertBillStatusLog(db, billId, status, userId) {
+async function insertBillAudit(db, billId, status, userId) {
   const insertLogQuery = `
-    INSERT INTO ${TABLE_STATUS_TRANSACTION} (bill_id, status, create_by)
+    INSERT INTO ${TABLE_AUDIT} (bill_id, status, create_by)
     VALUES (?, ?, ?)
   `;
 
   await db.execute(insertLogQuery, [billId, status, userId]);
-  logger.debug(`Bill status log inserted: bill_id=${billId}, status=${status}, user=${userId}`);
+  logger.debug(`Bill audit log inserted: bill_id=${billId}, status=${status}, user=${userId}`);
 }
 
 export const insertBill = async (req, res) => {
@@ -64,8 +64,8 @@ export const insertBill = async (req, res) => {
       uid
     ]);
 
-    // Insert bill status log
-    await insertBillStatusLog(db, result.insertId, parseInt(status), uid);
+    // Insert bill audit log
+    await insertBillAudit(db, result.insertId, parseInt(status), uid);
 
     res.json({
       success: true,
@@ -152,9 +152,9 @@ export const updateBill = async (req, res) => {
 
     const [result] = await db.execute(updateQuery, queryParams);
 
-    // Insert bill status log if status changed
+    // Insert bill audit log if status changed
     if (currentStatus !== parseInt(status)) {
-      await insertBillStatusLog(db, parseInt(id), parseInt(status), uid);
+      await insertBillAudit(db, parseInt(id), parseInt(status), uid);
     }
 
     res.json({
@@ -231,8 +231,8 @@ export const sendBill = async (req, res) => {
       });
     }
 
-    // Insert bill status log
-    await insertBillStatusLog(db, parseInt(id), 1, uid);
+    // Insert bill audit log
+    await insertBillAudit(db, parseInt(id), 1, uid);
 
     logger.info(`User ${uid} sent bill ID: ${id}`);
 
@@ -306,8 +306,8 @@ export const cancelSendBill = async (req, res) => {
       });
     }
 
-    // Insert bill status log
-    await insertBillStatusLog(db, parseInt(id), 3, uid);
+    // Insert bill audit log
+    await insertBillAudit(db, parseInt(id), 3, uid);
 
     logger.info(`User ${uid} canceled send bill ID: ${id}`);
 
@@ -364,8 +364,8 @@ export const deleteBill = async (req, res) => {
       });
     }
 
-    // Insert bill status log
-    await insertBillStatusLog(db, parseInt(id), 2, uid);
+    // Insert bill audit log
+    await insertBillAudit(db, parseInt(id), 2, uid);
 
     logger.info(`User ${uid} deleted bill ID: ${id}`);
 
@@ -745,8 +745,8 @@ export const insertBillWithExcel = async (req, res) => {
 
       const billId = billResult.insertId;
 
-      // Insert bill status log
-      await insertBillStatusLog(db, billId, parseInt(status), uid);
+      // Insert bill audit log
+      await insertBillAudit(db, billId, parseInt(status), uid);
 
       // Step 9: Generate initial bill_no for bill_room_information with row locking
       const pattern = `INV-${year}-${datePrefix}-%`;
@@ -973,9 +973,11 @@ export const getBillRoomList = async (req, res) => {
 
     // Get bill information (including expire_date and detail)
     const billQuery = `
-      SELECT title, detail, create_date, send_date, expire_date, status
-      FROM ${TABLE_INFORMATION}
-      WHERE id = ? AND status != 2
+      SELECT b.title, b.detail, b.create_date, b.send_date, b.expire_date, b.status, b.bill_type_id,
+             bt.title as bill_type_title
+      FROM ${TABLE_INFORMATION} b
+      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+      WHERE b.id = ? AND b.status != 2
     `;
     const [billRows] = await db.execute(billQuery, [parseInt(bill_id)]);
 
@@ -1117,6 +1119,155 @@ export const getBillRoomList = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch bill room list',
+      message: error.message
+    });
+  }
+};
+
+export const getBillRoomEachList = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, house_no, customer_id } = req.query;
+
+    if (!house_no || !customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters',
+        message: 'กรุณาระบุ house_no และ customer_id',
+        required: ['house_no', 'customer_id']
+      });
+    }
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    const db = getDatabase();
+    const currentDate = new Date();
+
+    // Helper function to format date as DD/MM/YYYY
+    const formatDate = (date) => {
+      if (!date) return '-';
+      const d = new Date(date);
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    };
+
+    // Get summary data (all records without pagination)
+    const summaryQuery = `
+      SELECT
+        br.status,
+        b.expire_date
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE br.house_no = ?
+        AND br.customer_id = ?
+        AND br.status != 2
+        AND b.status != 2
+      ORDER BY b.expire_date DESC
+    `;
+    const [summaryRows] = await db.execute(summaryQuery, [house_no, customer_id]);
+
+    // Calculate summary data
+    const totalRecords = summaryRows.length;
+    let pendingCount = 0; // status = 0
+    let paidCount = 0;     // status = 1
+    let nextPaymentDate = null;
+
+    summaryRows.forEach(row => {
+      const expireDate = new Date(row.expire_date);
+      const isOverdue = currentDate > expireDate;
+
+      if (row.status === 0) {
+        pendingCount++;
+        // หา expire_date ที่ใกล้ที่สุดของรายการที่ status = 0
+        if (!nextPaymentDate || expireDate < nextPaymentDate) {
+          nextPaymentDate = expireDate;
+        }
+      } else if (row.status === 1) {
+        paidCount++;
+      }
+    });
+
+    // Calculate payment completion
+    const completionPercentage = totalRecords > 0 ? Math.round((paidCount / totalRecords) * 100) : 0;
+    const completionText = `${paidCount}/${totalRecords} ครั้ง (${completionPercentage}%)`;
+
+    // Get paginated data with bill information
+    const dataQuery = `
+      SELECT
+        br.id,
+        br.bill_id,
+        br.bill_no,
+        br.house_no,
+        br.member_name,
+        br.total_price,
+        br.remark,
+        br.status,
+        br.create_date,
+        b.title as bill_title,
+        b.expire_date
+      FROM bill_room_information br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      WHERE br.house_no = ?
+        AND br.customer_id = ?
+        AND br.status != 2
+        AND b.status != 2
+      ORDER BY b.expire_date DESC
+      LIMIT ${limitNum} OFFSET ${offset}
+    `;
+
+    const [rows] = await db.execute(dataQuery, [house_no, customer_id]);
+
+    // Format data with date formatting and status adjustment
+    const formattedRows = rows.map(row => {
+      const expireDate = new Date(row.expire_date);
+      const isOverdue = currentDate > expireDate;
+
+      // Adjust status: if status = 0 and overdue, change to 3
+      let adjustedStatus = row.status;
+      if (row.status === 0 && isOverdue) {
+        adjustedStatus = 3;
+      }
+
+      return {
+        id: row.id,
+        bill_id: row.bill_id,
+        bill_no: row.bill_no,
+        bill_title: row.bill_title,
+        expire_date: formatDate(expireDate),
+        total_price: formatPrice(row.total_price),
+        status: adjustedStatus
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        summary_data: {
+          pending_amount: pendingCount,
+          payment_completion: completionText,
+          next_payment_date: formatDate(nextPaymentDate)
+        },
+        items: formattedRows
+      },
+      pagination: {
+        current_page: pageNum,
+        per_page: limitNum,
+        total: totalRecords,
+        total_pages: Math.ceil(totalRecords / limitNum),
+        has_next: pageNum * limitNum < totalRecords,
+        has_prev: pageNum > 1
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill room each list error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill room each list',
       message: error.message
     });
   }
