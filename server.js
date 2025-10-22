@@ -53,11 +53,12 @@ async function startServer() {
   try {
     await initDatabase();
 
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
+      const baseUrl = process.env.DOMAIN || `http://localhost:${PORT}`;
       logger.info(`Server running on port ${PORT}`);
-      logger.info(`Test endpoint: http://localhost:${PORT}/api/test`);
-      logger.info(`Insert data: POST http://localhost:${PORT}/api/test-data/insert_data`);
-      logger.info(`List data: GET http://localhost:${PORT}/api/test-data/list_data`);
+      logger.info(`Environment: ${process.env.NODE_ENV}`);
+      logger.info(`Health check: ${baseUrl}/health`);
+      logger.info(`API endpoint: ${baseUrl}/api/test`);
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
