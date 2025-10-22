@@ -42,7 +42,9 @@ kconnect_backend/
 │   ├── member.js         # Member routes
 │   ├── bill.js           # Bill routes
 │   ├── billType.js       # Bill Type routes
-│   └── billRoom.js       # Bill Room routes
+│   ├── billRoom.js       # Bill Room routes
+│   ├── payment.js        # Payment routes
+│   └── paymentType.js    # Payment Type routes
 ├── controllers/
 │   ├── testDataController.js  # Test data & table creation
 │   ├── newsController.js      # News business logic
@@ -51,7 +53,9 @@ kconnect_backend/
 │   ├── memberController.js    # Member business logic
 │   ├── billController.js      # Bill business logic
 │   ├── billTypeController.js  # Bill Type business logic
-│   └── billRoomController.js  # Bill Room business logic
+│   ├── billRoomController.js  # Bill Room business logic
+│   ├── paymentController.js   # Payment business logic
+│   └── paymentTypeController.js # Payment Type business logic
 ├── middleware/
 │   ├── errorHandler.js   # Error handling middleware
 │   └── logger.js         # Request logging middleware
@@ -97,6 +101,9 @@ MySQL connection configured via .env file:
 - `GET /api/test-data/create_bill_room_information` - Create bill_room_information table
 - `GET /api/test-data/create_bill_type_information` - Create bill_type_information table
 - `GET /api/test-data/create_bill_audit` - Create bill_audit_information table
+- `GET /api/test-data/create_payment_information` - Create payment_information table
+- `GET /api/test-data/create_payment_attachment` - Create payment_attachment table
+- `GET /api/test-data/create_payment_type_information` - Create payment_type_information table with default data
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -136,6 +143,16 @@ MySQL connection configured via .env file:
 ### Bill Room API
 - `POST /api/bill-room/insert` - Insert bill room (requires: bill_id, house_no, member_name, total_price, customer_id, status, uid)
 - `GET /api/bill-room/list` - List bill rooms with pagination (requires: customer_id)
+
+### Payment API
+- `POST /api/payment/insert` - Insert payment (requires: upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, uid)
+- `PUT /api/payment/update` - Update payment (requires: ids, uid, status)
+- `GET /api/payment/list` - List payments with pagination (requires: customer_id)
+- `GET /api/payment/summary_status` - Get payment count summary by status (requires: customer_id)
+- `GET /api/payment/{id}` - Get single payment detail by ID
+
+### Payment Type API
+- `GET /api/payment_type/list` - List payment types with pagination
 
 ### File Upload API
 - `POST /api/upload_file` - Upload files to specific module (menu + upload_key)
@@ -291,6 +308,52 @@ MySQL connection configured via .env file:
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
 
+**payment_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `bill_room_id` - INT NOT NULL (references bill_room_information.id)
+- `payment_amount` - DOUBLE NOT NULL
+- `payment_type_id` - INT NOT NULL
+- `customer_id` - VARCHAR(255) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1 (0=Pending approval, 1=Approved, 2=Deleted, 3=Rejected)
+- `member_id` - INT NOT NULL
+- `remark` - TEXT NULL
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
+**payment_attachment table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `file_name` - VARCHAR(255) NOT NULL
+- `file_size` - INT NOT NULL (bytes)
+- `file_ext` - VARCHAR(10) NOT NULL
+- `file_path` - VARCHAR(500) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+
+**payment_type_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `title` - VARCHAR(255) NOT NULL
+- `detail` - TEXT NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+- Default data: 1=Mobile Banking (ชำระผ่านแอปธนาคาร, status=0), 2=โอนผ่านธนาคาร (โอนเงินแล้วแนบสลิป, status=1), 3=ชำระที่นิติบุคคล (ชำระกับทางนิติบุคคลโดยตรง, status=0)
+
 ### API Parameters
 
 **News API:**
@@ -380,11 +443,12 @@ MySQL connection configured via .env file:
 - **Bill Room Each List**: `?page=1&limit=10&house_no=xxx&customer_id=xxx` via `/api/bill/bill_room_each_list`
   - Required: house_no, customer_id
   - Optional: page, limit
-  - Returns summary data and paginated list of bills for specific room
+  - Returns summary data and paginated list of bills for specific room (only sent bills with bill_information.status = 1)
   - Response structure:
     - summary_data: pending_amount (count of status=0), payment_completion (format: "3/5 ครั้ง (60%)"), next_payment_date (earliest expire_date of pending bills, format: DD/MM/YYYY)
     - items: expire_date (DD/MM/YYYY), bill_no, bill_title, total_price (฿ formatted), status (dynamic: 0→3 if overdue)
   - Order by: expire_date DESC (newest expire_date first)
+  - Filter: Only shows bills where bill_information.status = 1 (sent bills only)
   - Dynamic status: If status=0 and current_date > expire_date, returns status=3 (overdue)
 
 **Bill Type API:**
@@ -401,6 +465,83 @@ MySQL connection configured via .env file:
   - Required: customer_id
   - Optional: page, limit, status, keyword, bill_id
   - Response includes: remark field
+
+**Payment API:**
+- **Insert**: `{upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, uid, remark?}` via `/api/payment/insert`
+  - Required: upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, uid
+  - Optional: remark
+  - payment_amount is DOUBLE type
+- **Update**: `{ids, uid, status, remark?}` via `/api/payment/update`
+  - Required: ids (array of integers), uid, status
+  - Optional: remark (required if status=3)
+  - Status validation: Must be 1 or 3 only (1 = Approved, 3 = Rejected)
+  - Bulk update support: Can update single or multiple payments in one request
+  - Single update: `{"ids": [1], "uid": 123, "status": 1}`
+  - Multiple update: `{"ids": [1,2,3,4], "uid": 123, "status": 1}`
+  - Rejection with same remark: All rejected items share the same remark value
+  - Only allows updating payments with current status = 0 (pending approval)
+  - Uses transaction with FOR UPDATE lock for data consistency
+  - Returns detailed results:
+    - total: Total number of IDs submitted
+    - success_count: Number of successfully updated items
+    - failed_count: Number of failed items
+    - success_items: Array of successfully updated items with ID, status, remark
+    - failed_items: Array of failed items with ID and reason
+  - Validation errors (returns error immediately):
+    - ids is not an array or empty
+    - status is not 1 or 3
+    - status=3 without remark
+  - Item-level failures (continues processing, returns in failed_items):
+    - Payment not found
+    - Payment status is not 0 (already processed)
+- **List**: `?page=1&limit=10&status=1&keyword=search&customer_id=xxx&amount_range=1&date_range=1` via `/api/payment/list`
+  - Required: customer_id
+  - Optional: page, limit, status, keyword, amount_range, date_range
+  - Keyword search includes: bill_no, room title (เลขห้อง), member full_name (ไม่รวม prefix), bill_title, house_no
+  - Amount range filter (payment_amount):
+    - 1 = ทุกจำนวนเงิน (no filter)
+    - 2 = น้อยกว่า 1,000
+    - 3 = 1,000-3,000
+    - 4 = มากกว่า 3,000
+  - Date range filter (create_date):
+    - 1 = ทั้งหมด (all, no filter)
+    - 2 = วันนี้ (today)
+    - 3 = 7 วันล่าสุด (last 7 days)
+    - 4 = เดือนนี้ (this month)
+  - Response includes joined data:
+    - member_name (prefix_name + full_name, e.g., "นายสมชาย")
+    - member_real_name (full_name only, excluding prefix, e.g., "สมชาย")
+    - member_detail (room_title + " | " + phone_number)
+    - bill_no, house_no, bill_total_price, bill_title
+    - payment_type_title, payment_type_detail
+    - remark (optional text field)
+  - payment_amount and bill_total_price are formatted with ฿ prefix
+- **Summary Status**: `?customer_id=xxx` via `/api/payment/summary_status`
+  - Required: customer_id
+  - Returns count of payments by tab:
+    - tab1: Fixed value (99)
+    - tab2: Pending approval count (status=0)
+    - tab3: Approved count (status=1)
+    - tab4: Rejected count (status=3)
+  - Excludes deleted records (status=2)
+  - Returns 0 if no records found for tab2/tab3/tab4
+- **Detail**: `/api/payment/{id}` - Get single payment by ID
+  - Returns complete payment information with joined data:
+    - Payment information: id, upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, remark
+    - Member information: member_name, member_real_name, prefix_name, phone_number, email, member_detail, room_title
+    - Bill room information: bill_no, house_no, bill_total_price
+    - Bill information: bill_id, bill_title, bill_type_id, bill_type_title, expire_date, send_date
+    - Payment type information: payment_type_title, payment_type_detail
+    - Audit fields: create_date, create_by, update_date, update_by, delete_date, delete_by
+  - All date fields formatted with _formatted suffix (DD/MM/YYYY HH:mm:ss)
+  - payment_amount and bill_total_price formatted with ฿ prefix
+  - Returns 404 if payment not found or deleted (status=2)
+
+**Payment Type API:**
+- **List**: `?page=1&limit=100&status=1&keyword=search` via `/api/payment_type/list`
+  - All parameters optional
+  - Default limit: 100
+  - Keyword search includes: title, detail
 
 **File Upload API:**
 - **Upload**: `{upload_key, menu}` + files via form-data to `/api/upload_file`
@@ -454,6 +595,26 @@ MySQL connection configured via .env file:
 - **Customer**: `customer_id` - REQUIRED - filter by customer ID
 - **Status**: `status` - filter by status (default: excludes deleted records with status=2)
 - **Pagination**: `page`, `limit` - standard pagination
+
+**Payment List Filters:**
+- **Search**: `keyword` - searches in bill_no, room title (เลขห้อง from member_detail), member full_name (excluding prefix), bill_title, house_no (LIKE %keyword%)
+- **Customer**: `customer_id` - REQUIRED - filter by customer ID
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Amount Range**: `amount_range` - filter by payment_amount (1=all, 2=<1000, 3=1000-3000, 4=>3000)
+- **Date Range**: `date_range` - filter by create_date (1=all, 2=today, 3=last 7 days, 4=this month)
+- **Pagination**: `page`, `limit` - standard pagination
+- **Joined Data**:
+  - member_name (CONCAT of prefix_name + full_name, e.g., "นายสมชาย")
+  - member_real_name (full_name only, excluding prefix, e.g., "สมชาย")
+  - member_detail (CONCAT of room_title + " | " + phone_number)
+  - bill_no, house_no, bill_total_price, bill_title
+  - payment_type_title, payment_type_detail
+- **Price Formatting**: payment_amount and bill_total_price formatted with ฿ prefix
+
+**Payment Type List Filters:**
+- **Search**: `keyword` - searches in title, detail (LIKE %keyword%)
+- **Status**: `status` - filter by status (default: excludes deleted records with status=2)
+- **Pagination**: `page`, `limit` - standard pagination (default limit: 100)
 
 ### Date Formatting
 
@@ -564,6 +725,13 @@ const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
   - All status changes are logged in bill_audit_information table for audit trail
   - Helper function `insertBillAudit()` centralizes logging logic across all bill operations
   - Status logs recorded on: insert, update (if status changed), send, cancel_send, delete, import from Excel
+- **Payment Status Workflow**:
+  - Status meanings: 0=Pending approval (awaiting admin review), 1=Approved (payment accepted), 2=Deleted (soft delete), 3=Rejected (payment declined)
+  - Update restrictions: Only payments with status=0 can be updated (pending approval only)
+  - Approval process: Admin updates status from 0→1 (approve) or 0→3 (reject)
+  - Status validation: Update API only accepts status values 1 or 3 (cannot update to 0, 2, or other values)
+  - Rejection requirement: When setting status=3, remark field is required to provide reason for rejection
+  - Approved/Rejected payments: Cannot be updated again, member must submit new payment notification if rejected
 - **Excel/CSV Import**: Bill system supports importing bill_room data from Excel/CSV files with validation and preview
   - **Preview Flow** (GET /api/bill/bill_excel_list):
     - Step 1: Upload Excel/CSV via `/api/upload_file` (menu=bill) → get upload_key

@@ -1,5 +1,5 @@
 import express from 'express';
-import { insertTestData, getTestDataList, createNewsAttachment, createBillAttachment, createAppConfig, createRoomInformation, createMemberInformation, createBillInformation, createBillRoomInformation, createBillTypeInformation, createBillAudit } from '../controllers/testDataController.js';
+import { insertTestData, getTestDataList, createNewsAttachment, createBillAttachment, createAppConfig, createRoomInformation, createMemberInformation, createBillInformation, createBillRoomInformation, createBillTypeInformation, createBillAudit, createPaymentInformation, createPaymentAttachment, createPaymentTypeInformation } from '../controllers/testDataController.js';
 
 const router = express.Router();
 
@@ -15,5 +15,8 @@ router.get('/create_bill_information', createBillInformation);
 router.get('/create_bill_room_information', createBillRoomInformation);
 router.get('/create_bill_type_information', createBillTypeInformation);
 router.get('/create_bill_audit', createBillAudit);
+router.get('/create_payment_information', createPaymentInformation);
+router.get('/create_payment_attachment', createPaymentAttachment);
+router.get('/create_payment_type_information', createPaymentTypeInformation);
 
 export default router;

@@ -688,3 +688,203 @@ export const createBillAudit = async (req, res) => {
     });
   }
 };
+
+export const createPaymentInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS payment_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        bill_room_id INT NOT NULL,
+        payment_amount DOUBLE NOT NULL,
+        payment_type_id INT NOT NULL,
+        customer_id VARCHAR(255) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        member_id INT NOT NULL,
+        remark TEXT NULL,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table payment_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Payment information table created successfully',
+      data: {
+        table_name: 'payment_information',
+        table_created: true,
+        fields: [
+          'id',
+          'upload_key',
+          'bill_room_id',
+          'payment_amount',
+          'payment_type_id',
+          'customer_id',
+          'status',
+          'member_id',
+          'remark',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create payment information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create payment information table',
+      message: error.message
+    });
+  }
+};
+
+export const createPaymentAttachment = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createAttachmentTableQuery = `
+      CREATE TABLE IF NOT EXISTS payment_attachment (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_size INT NOT NULL,
+        file_ext VARCHAR(10) NOT NULL,
+        file_path VARCHAR(500) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createAttachmentTableQuery);
+    logger.info('Table payment_attachment checked/created');
+
+    res.json({
+      success: true,
+      message: 'Payment attachment table created successfully',
+      data: {
+        table_name: 'payment_attachment',
+        table_created: true
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create payment attachment error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create payment attachment table',
+      message: error.message
+    });
+  }
+};
+
+export const createPaymentTypeInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS payment_type_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        detail TEXT NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table payment_type_information checked/created');
+
+    const defaultPaymentTypes = [
+      { id: 1, title: 'Mobile Banking', detail: 'ชำระผ่านแอปธนาคาร', status: 0 },
+      { id: 2, title: 'โอนผ่านธนาคาร', detail: 'โอนเงินแล้วแนบสลิป', status: 1 },
+      { id: 3, title: 'ชำระที่นิติบุคคล', detail: 'ชำระกับทางนิติบุคคลโดยตรง', status: 0 }
+    ];
+
+    const uploadKey = Math.random().toString(36).substring(2, 34);
+    const insertedTypes = [];
+
+    for (const type of defaultPaymentTypes) {
+      const insertQuery = `
+        INSERT IGNORE INTO payment_type_information (id, upload_key, title, detail, status, create_by)
+        VALUES (?, ?, ?, ?, ?, -1)
+      `;
+
+      const [result] = await db.execute(insertQuery, [
+        type.id,
+        uploadKey,
+        type.title,
+        type.detail,
+        type.status
+      ]);
+
+      if (result.affectedRows > 0) {
+        insertedTypes.push({
+          id: type.id,
+          title: type.title,
+          detail: type.detail,
+          status: type.status
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Payment type information table created and initialized successfully',
+      data: {
+        table_name: 'payment_type_information',
+        table_created: true,
+        types_inserted: insertedTypes,
+        total_types: insertedTypes.length,
+        fields: [
+          'id',
+          'upload_key',
+          'title',
+          'detail',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create payment type information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create payment type information table',
+      message: error.message
+    });
+  }
+};

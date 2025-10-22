@@ -7,7 +7,10 @@ import fs from 'fs';
 
 const MENU = 'bill';
 const TABLE_INFORMATION = `${MENU}_information`;
-const TABLE_AUDIT = 'bill_audit_information';
+const TABLE_ROOM = `${MENU}_room_information`;
+const TABLE_TYPE = `${MENU}_type_information`;
+const TABLE_ATTACHMENT = `${MENU}_attachment`;
+const TABLE_AUDIT = `${MENU}_audit_information`;
 
 /**
  * Helper function to insert bill audit log
@@ -411,8 +414,8 @@ export const getBillDetail = async (req, res) => {
              COUNT(br.id) as total_room,
              COALESCE(SUM(br.total_price), 0) as total_price
       FROM ${TABLE_INFORMATION} b
-      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
-      LEFT JOIN bill_room_information br ON br.bill_id = b.id AND br.status != 2
+      LEFT JOIN ${TABLE_TYPE} bt ON b.bill_type_id = bt.id
+      LEFT JOIN ${TABLE_ROOM} br ON br.bill_id = b.id AND br.status != 2
       WHERE b.id = ? AND b.status != 2
       GROUP BY b.id
     `;
@@ -492,7 +495,7 @@ export const insertBillWithExcel = async (req, res) => {
     // Step 1: Query Excel file from bill_attachment
     const attachmentQuery = `
       SELECT file_path, file_name, file_ext
-      FROM bill_attachment
+      FROM ${TABLE_ATTACHMENT}
       WHERE upload_key = ? AND status != 2
       ORDER BY create_date DESC
       LIMIT 1
@@ -723,6 +726,10 @@ export const insertBillWithExcel = async (req, res) => {
       // Step 8: Insert bill_information
       const sendDate = parseInt(status) === 1 ? new Date() : null;
 
+      // Adjust expire_date time to 23:59:59
+      const expireDateObj = new Date(expire_date);
+      expireDateObj.setHours(23, 59, 59, 999);
+
       const billInsertQuery = `
         INSERT INTO ${TABLE_INFORMATION} (upload_key, bill_no, title, bill_type_id, detail, expire_date, send_date, customer_id, status, create_by)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -736,7 +743,7 @@ export const insertBillWithExcel = async (req, res) => {
         title?.trim(),
         billTypeIdValue,
         detail?.trim(),
-        expire_date,
+        expireDateObj,
         sendDate,
         customer_id?.trim(),
         status,
@@ -754,7 +761,7 @@ export const insertBillWithExcel = async (req, res) => {
       // ใช้ FOR UPDATE เพื่อ lock row ป้องกัน race condition
       const lastBillNoQuery = `
         SELECT bill_no
-        FROM bill_room_information
+        FROM ${TABLE_ROOM}
         WHERE bill_no LIKE ? AND customer_id = ?
         ORDER BY bill_no DESC
         LIMIT 1
@@ -792,13 +799,13 @@ export const insertBillWithExcel = async (req, res) => {
           rowData.total_price,
           rowData.remark,
           customer_id?.trim(),
-          1, // status = 1 (default active)
+          0, // status = 0 (pending payment)
           uid  // create_by = uid
         );
       }
 
       const billRoomInsertQuery = `
-        INSERT INTO bill_room_information (bill_id, bill_no, house_no, member_name, total_price, remark, customer_id, status, create_by)
+        INSERT INTO ${TABLE_ROOM} (bill_id, bill_no, house_no, member_name, total_price, remark, customer_id, status, create_by)
         VALUES ${billRoomValues.join(', ')}
       `;
 
@@ -908,8 +915,8 @@ export const getBillList = async (req, res) => {
              COUNT(br.id) as total_room,
              COALESCE(SUM(br.total_price), 0) as total_price
       FROM ${TABLE_INFORMATION} b
-      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
-      LEFT JOIN bill_room_information br ON br.bill_id = b.id AND br.status != 2
+      LEFT JOIN ${TABLE_TYPE} bt ON b.bill_type_id = bt.id
+      LEFT JOIN ${TABLE_ROOM} br ON br.bill_id = b.id AND br.status != 2
       ${whereClause}
       GROUP BY b.id
       ORDER BY b.create_date DESC
@@ -976,7 +983,7 @@ export const getBillRoomList = async (req, res) => {
       SELECT b.title, b.detail, b.create_date, b.send_date, b.expire_date, b.status, b.bill_type_id,
              bt.title as bill_type_title
       FROM ${TABLE_INFORMATION} b
-      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+      LEFT JOIN ${TABLE_TYPE} bt ON b.bill_type_id = bt.id
       WHERE b.id = ? AND b.status != 2
     `;
     const [billRows] = await db.execute(billQuery, [parseInt(bill_id)]);
@@ -1040,7 +1047,7 @@ export const getBillRoomList = async (req, res) => {
     // Count total and sum price
     const countQuery = `
       SELECT COUNT(*) as total, COALESCE(SUM(total_price), 0) as total_price_sum
-      FROM bill_room_information
+      FROM ${TABLE_ROOM}
       ${whereClause}
     `;
     const [countResult] = await db.execute(countQuery, queryParams);
@@ -1053,7 +1060,7 @@ export const getBillRoomList = async (req, res) => {
         COUNT(CASE WHEN status = 1 THEN 1 END) as status_1,
         COUNT(CASE WHEN status = 0 THEN 1 END) as status_0,
         COALESCE(SUM(CASE WHEN status = 1 THEN total_price ELSE 0 END), 0) as paid
-      FROM bill_room_information
+      FROM ${TABLE_ROOM}
       WHERE bill_id = ? AND status != 2
     `;
     const [summaryResult] = await db.execute(summaryQuery, [parseInt(bill_id)]);
@@ -1067,7 +1074,7 @@ export const getBillRoomList = async (req, res) => {
     const dataQuery = `
       SELECT id, bill_id, bill_no, house_no, member_name, total_price, remark, status,
              create_date, create_by
-      FROM bill_room_information
+      FROM ${TABLE_ROOM}
       ${whereClause}
       ORDER BY create_date ASC
       LIMIT ${limitNum} OFFSET ${offset}
@@ -1159,12 +1166,12 @@ export const getBillRoomEachList = async (req, res) => {
       SELECT
         br.status,
         b.expire_date
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE br.house_no = ?
         AND br.customer_id = ?
         AND br.status != 2
-        AND b.status != 2
+        AND b.status = 1
       ORDER BY b.expire_date DESC
     `;
     const [summaryRows] = await db.execute(summaryQuery, [house_no, customer_id]);
@@ -1208,12 +1215,12 @@ export const getBillRoomEachList = async (req, res) => {
         br.create_date,
         b.title as bill_title,
         b.expire_date
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE br.house_no = ?
         AND br.customer_id = ?
         AND br.status != 2
-        AND b.status != 2
+        AND b.status = 1
       ORDER BY b.expire_date DESC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
@@ -1334,7 +1341,7 @@ export const getSummaryData = async (req, res) => {
     // Card 3: รอการชำระ (Pending payment - bill_room_information.status = 0)
     const pendingPaymentQuery = `
       SELECT COUNT(*) as total
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status = 0
     `;
@@ -1344,7 +1351,7 @@ export const getSummaryData = async (req, res) => {
     // Card 3: รายการรอชำระที่สร้างในเดือนนี้
     const pendingPaymentThisMonthQuery = `
       SELECT COUNT(*) as total
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status = 0
         AND br.create_date >= ? AND br.create_date <= ?
@@ -1355,7 +1362,7 @@ export const getSummaryData = async (req, res) => {
     // Card 4: ชำระเรียบร้อย (Paid - bill_room_information.status = 1)
     const paidQuery = `
       SELECT COUNT(*) as total
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status = 1
     `;
@@ -1365,7 +1372,7 @@ export const getSummaryData = async (req, res) => {
     // Card 4: รายการที่ชำระในเดือนนี้
     const paidThisMonthQuery = `
       SELECT COUNT(*) as total
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status = 1
         AND br.create_date >= ? AND br.create_date <= ?
@@ -1376,7 +1383,7 @@ export const getSummaryData = async (req, res) => {
     // Card 5: ห้องทั้งหมด (Total unique rooms)
     const totalRoomsQuery = `
       SELECT COUNT(DISTINCT br.house_no) as total
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2
     `;
@@ -1386,7 +1393,7 @@ export const getSummaryData = async (req, res) => {
     // Card 5: ห้องที่เพิ่มขึ้นในเดือนนี้
     const newRoomsThisMonthQuery = `
       SELECT COUNT(DISTINCT br.house_no) as total
-      FROM bill_room_information br
+      FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2
         AND br.create_date >= ? AND br.create_date <= ?
@@ -1458,7 +1465,7 @@ export const getBillExcelList = async (req, res) => {
     // Step 1: Query Excel file from bill_attachment
     const attachmentQuery = `
       SELECT file_path, file_name, file_ext
-      FROM bill_attachment
+      FROM ${TABLE_ATTACHMENT}
       WHERE upload_key = ? AND status != 2
       ORDER BY create_date DESC
       LIMIT 1

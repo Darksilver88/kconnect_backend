@@ -8,6 +8,8 @@ import memberRoutes from './member.js';
 import billRoutes from './bill.js';
 import billTypeRoutes from './billType.js';
 import billRoomRoutes from './billRoom.js';
+import paymentRoutes from './payment.js';
+import paymentTypeRoutes from './paymentType.js';
 
 const router = express.Router();
 
@@ -29,5 +31,7 @@ router.use('/member', memberRoutes);
 router.use('/bill', billRoutes);
 router.use('/bill_type', billTypeRoutes);
 router.use('/bill_room', billRoomRoutes);
+router.use('/payment', paymentRoutes);
+router.use('/payment_type', paymentTypeRoutes);
 
 export default router;
