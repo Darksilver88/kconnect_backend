@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(npm install)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Read(//Users/anusornkongthong/Desktop/**)"
     ],
     "deny": [],
     "ask": []
