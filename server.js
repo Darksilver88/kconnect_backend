@@ -32,6 +32,21 @@ app.use((req, res, next) => {
   }
 });
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'KConnect API Server',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api/test',
+      docs: 'https://github.com/Darksilver88/kconnect_backend'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Routes
 app.use('/api', apiRoutes);
 
