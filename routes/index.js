@@ -8,6 +8,7 @@ import memberRoutes from './member.js';
 import billRoutes from './bill.js';
 import billTypeRoutes from './billType.js';
 import billRoomRoutes from './billRoom.js';
+import billTransactionRoutes from './billTransaction.js';
 import paymentRoutes from './payment.js';
 import paymentTypeRoutes from './paymentType.js';
 
@@ -31,6 +32,7 @@ router.use('/member', memberRoutes);
 router.use('/bill', billRoutes);
 router.use('/bill_type', billTypeRoutes);
 router.use('/bill_room', billRoomRoutes);
+router.use('/bill_transaction', billTransactionRoutes);
 router.use('/payment', paymentRoutes);
 router.use('/payment_type', paymentTypeRoutes);
 

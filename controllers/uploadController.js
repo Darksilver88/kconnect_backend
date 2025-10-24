@@ -2,6 +2,7 @@ import { getDatabase } from '../config/database.js';
 import path from 'path';
 import logger from '../utils/logger.js';
 import { getConfig } from '../utils/config.js';
+import { uploadFile, softDeleteFileAttachment, getFileUrl, getUploadType } from '../utils/storageManager.js';
 
 /**
  * Decode filename to handle both Postman (UTF-8) and Browser (latin1) encoding
@@ -135,20 +136,29 @@ export const uploadFiles = async (req, res) => {
       }
     }
 
-    // Process files
+    // Process files - upload to storage (Firebase or Project based on UPLOAD_TYPE)
     const attachmentResults = [];
-    const domain = process.env.DOMAIN || 'http://localhost:3000';
+    const uploadType = getUploadType();
+
+    logger.info(`Using upload type: ${uploadType}`);
 
     for (const file of files) {
       // Decode filename to handle both Postman and Browser encoding
       const decodedFilename = decodeFilename(file.originalname);
 
+      // Override originalname with decoded version
+      file.originalname = decodedFilename;
+
+      // Upload to storage (Firebase or Project)
+      const uploadResult = await uploadFile(file, menu);
+
+      // Save to database
       const fileInfo = {
         upload_key: upload_key,
-        file_name: decodedFilename,
-        file_size: file.size,
-        file_ext: path.extname(decodedFilename).slice(1),
-        file_path: file.path,
+        file_name: uploadResult.originalName,
+        file_size: uploadResult.size,
+        file_ext: uploadResult.ext,
+        file_path: uploadResult.path, // Storage path (URL or local path)
         create_by: 1 // Default user, should be from auth
       };
 
@@ -169,7 +179,7 @@ export const uploadFiles = async (req, res) => {
       attachmentResults.push({
         id: result.insertId,
         ...fileInfo,
-        file_path: `${domain}/${file.path}`
+        file_url: getFileUrl(fileInfo.file_path) // Add full URL for frontend
       });
     }
 
@@ -180,6 +190,7 @@ export const uploadFiles = async (req, res) => {
         upload_key: upload_key,
         menu: menu,
         table: tableName,
+        upload_type: uploadType,
         files: attachmentResults,
         count: attachmentResults.length
       },
@@ -230,22 +241,8 @@ export const deleteFile = async (req, res) => {
       });
     }
 
-    // Soft delete file (set status = 2)
-    const deleteQuery = `
-      UPDATE ${tableName}
-      SET status = 2, delete_date = CURRENT_TIMESTAMP, delete_by = ?
-      WHERE id = ? AND status != 2
-    `;
-
-    const [result] = await db.execute(deleteQuery, [uid, id]);
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'File not found or already deleted',
-        message: 'ไม่พบไฟล์ที่ต้องการลบ หรืออาจถูกลบไปแล้ว'
-      });
-    }
+    // Soft delete file (set status = 2) and delete from Firebase
+    const deleteResult = await softDeleteFileAttachment(id, uid, tableName);
 
     res.json({
       success: true,
@@ -254,7 +251,8 @@ export const deleteFile = async (req, res) => {
         id: parseInt(id),
         menu: menu,
         table: tableName,
-        delete_by: uid
+        delete_by: uid,
+        file_path: deleteResult.filePath
       },
       timestamp: new Date().toISOString()
     });

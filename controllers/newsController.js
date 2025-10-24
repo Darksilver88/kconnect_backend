@@ -2,6 +2,7 @@ import { getDatabase } from '../config/database.js';
 import { createCategoryTable } from '../utils/fileUpload.js';
 import logger from '../utils/logger.js';
 import { addFormattedDatesToList, addFormattedDates } from '../utils/dateFormatter.js';
+import { getFileUrl } from '../utils/storageManager.js';
 
 const MENU = 'news';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -315,11 +316,10 @@ export const getNewsById = async (req, res) => {
 
     const [attachments] = await db.execute(attachmentQuery, [rows[0].upload_key]);
 
-    // Add domain to file_path and format dates for attachments
-    const domain = process.env.DOMAIN || 'http://localhost:3000';
+    // Format attachments with smart URL building
     const attachmentsWithUrl = attachments.map(attachment => ({
       ...addFormattedDates(attachment, ['create_date']),
-      file_path: `${domain}/${attachment.file_path}`
+      file_path: getFileUrl(attachment.file_path)
     }));
 
     // Format dates for main news data

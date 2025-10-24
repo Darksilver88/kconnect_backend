@@ -2,8 +2,11 @@ import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
 import { formatNumber, formatPrice } from '../utils/numberFormatter.js';
+import { getUploadType } from '../utils/storageManager.js';
 import xlsx from 'xlsx';
 import fs from 'fs';
+import https from 'https';
+import http from 'http';
 
 const MENU = 'bill';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -27,6 +30,62 @@ async function insertBillAudit(db, billId, status, userId) {
 
   await db.execute(insertLogQuery, [billId, status, userId]);
   logger.debug(`Bill audit log inserted: bill_id=${billId}, status=${status}, user=${userId}`);
+}
+
+/**
+ * Helper function to read file from Firebase URL or Local path
+ * @param {string} filePath - Firebase URL or local file path
+ * @param {string} fileExt - File extension (xlsx, xls, csv)
+ * @returns {Promise<Object>} xlsx workbook object
+ */
+async function readExcelFile(filePath, fileExt) {
+  const uploadType = getUploadType();
+
+  if (uploadType === 'firebase' || filePath.startsWith('http://') || filePath.startsWith('https://')) {
+    // Firebase mode: fetch file from URL
+    return new Promise((resolve, reject) => {
+      const protocol = filePath.startsWith('https://') ? https : http;
+
+      protocol.get(filePath, (response) => {
+        if (response.statusCode !== 200) {
+          return reject(new Error(`Failed to fetch file: HTTP ${response.statusCode}`));
+        }
+
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => {
+          try {
+            const buffer = Buffer.concat(chunks);
+
+            let workbook;
+            if (fileExt === 'csv') {
+              const fileContent = buffer.toString('utf8');
+              workbook = xlsx.read(fileContent, { type: 'string', codepage: 65001 });
+            } else {
+              workbook = xlsx.read(buffer, { type: 'buffer' });
+            }
+
+            resolve(workbook);
+          } catch (error) {
+            reject(error);
+          }
+        });
+        response.on('error', reject);
+      }).on('error', reject);
+    });
+  } else {
+    // Project mode: read from local file
+    if (!fs.existsSync(filePath)) {
+      throw new Error('File not found on server');
+    }
+
+    if (fileExt === 'csv') {
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      return xlsx.read(fileContent, { type: 'string', codepage: 65001 });
+    } else {
+      return xlsx.readFile(filePath);
+    }
+  }
 }
 
 export const insertBill = async (req, res) => {
@@ -525,45 +584,18 @@ export const insertBillWithExcel = async (req, res) => {
       });
     }
 
-    // Step 3: Check if file exists
-    const fileExists = fs.existsSync(filePath);
-    logger.debug('File exists:', fileExists);
-
-    if (!fileExists) {
-      return res.status(404).json({
-        success: false,
-        error: 'File not found on server',
-        message: 'ไม่พบไฟล์บนเซิร์ฟเวอร์',
-        debug: { filePath }
-      });
-    }
-
-    // Debug: ดู file stats
-    const stats = fs.statSync(filePath);
-    logger.debug('File stats:', {
-      size: stats.size,
-      isFile: stats.isFile(),
-      path: filePath
-    });
-
-    // Step 4: Read and parse Excel/CSV file
+    // Step 3: Read and parse Excel/CSV file
     let workbook;
     try {
       logger.debug('Attempting to read file:', filePath);
-      // สำหรับ CSV ต้องอ่านด้วย UTF-8 encoding
-      if (fileExt === 'csv') {
-        const fileContent = fs.readFileSync(filePath, 'utf8');
-        workbook = xlsx.read(fileContent, { type: 'string', codepage: 65001 });
-      } else {
-        workbook = xlsx.readFile(filePath);
-      }
+      workbook = await readExcelFile(filePath, fileExt);
       logger.debug('Workbook read successfully');
     } catch (error) {
       logger.error('Error reading file:', error);
       return res.status(400).json({
         success: false,
         error: 'Failed to read file',
-        message: 'ไม่สามารถอ่านไฟล์ได้ ไฟล์อาจเสียหาย',
+        message: 'ไม่สามารถอ่านไฟล์ได้ ไฟล์อาจเสียหาย หรือไม่พบไฟล์บนเซิร์ฟเวอร์',
         debug: {
           filePath,
           errorMessage: error.message
@@ -588,7 +620,7 @@ export const insertBillWithExcel = async (req, res) => {
     const data = xlsx.utils.sheet_to_json(worksheet, {
       defval: null,
       blankrows: false,
-      raw: false  // แปลง value เป็น string
+      raw: false  // แปลง value เป็น string เพื่อให้ใช้งานง่าย
     });
 
     // Step 5: Validate file data
@@ -636,7 +668,21 @@ export const insertBillWithExcel = async (req, res) => {
         continue;
       }
 
-      const houseNo = row['เลขห้อง']?.toString().trim();
+      // แปลงเลขห้อง: ถ้าเป็น date string ที่มีรูปแบบ "11/1/01" หรือ "1/11/01" ให้แปลงเป็น "11/01"
+      let houseNoRaw = row['เลขห้อง'];
+      if (houseNoRaw && typeof houseNoRaw === 'string') {
+        // ตรวจสอบว่าเป็น date format 3 ส่วน (เช่น "11/1/01" หรือ "1/11/01")
+        const datePattern = /^(\d{1,2})\/(\d{1,2})\/(\d{1,2})$/;
+        const match = houseNoRaw.match(datePattern);
+        if (match) {
+          // เลือกเอา 2 ส่วนแรก มาเป็นเลขห้อง (ส่วนที่ 1 และ 2)
+          const part1 = match[1].padStart(2, '0');
+          const part2 = match[2].padStart(2, '0');
+          houseNoRaw = `${part1}/${part2}`;
+        }
+      }
+
+      const houseNo = houseNoRaw?.toString().trim();
       const memberName = row['ชื่อลูกบ้าน']?.toString().trim();
       const totalPriceRaw = row['ยอดเงิน'];
       const remarkRaw = row['หมายเหตุ'];
@@ -727,8 +773,12 @@ export const insertBillWithExcel = async (req, res) => {
       const sendDate = parseInt(status) === 1 ? new Date() : null;
 
       // Adjust expire_date time to 23:59:59
+      // Parse date string and set time to 23:59:59 in local timezone
       const expireDateObj = new Date(expire_date);
-      expireDateObj.setHours(23, 59, 59, 999);
+      expireDateObj.setHours(23);
+      expireDateObj.setMinutes(59);
+      expireDateObj.setSeconds(59);
+      expireDateObj.setMilliseconds(0);
 
       const billInsertQuery = `
         INSERT INTO ${TABLE_INFORMATION} (upload_key, bill_no, title, bill_type_id, detail, expire_date, send_date, customer_id, status, create_by)
@@ -1010,6 +1060,7 @@ export const getBillRoomList = async (req, res) => {
     // status = 0: ยังไม่ชำระ (ยังไม่เลยกำหนด)
     // status = 1: ชำระแล้ว
     // status = 3: เลยกำหนดชำระ (จริงๆ ใน DB เป็น 0 แต่เลย expire_date แล้ว)
+    // status = 4: ชำระบางส่วน (partial payment)
     if (status !== undefined && status !== '' && parseInt(status) !== -1) {
       const statusNum = parseInt(status);
 
@@ -1031,6 +1082,9 @@ export const getBillRoomList = async (req, res) => {
           // ถ้ายังไม่เลยกำหนด ไม่มีรายการ status = 3
           whereClause += ' AND 1 = 0';
         }
+      } else if (statusNum === 4) {
+        // แสดงเฉพาะ status = 4 (ชำระบางส่วน)
+        whereClause += ' AND status = 4';
       }
     }
 
@@ -1059,6 +1113,7 @@ export const getBillRoomList = async (req, res) => {
       SELECT
         COUNT(CASE WHEN status = 1 THEN 1 END) as status_1,
         COUNT(CASE WHEN status = 0 THEN 1 END) as status_0,
+        COUNT(CASE WHEN status = 4 THEN 1 END) as status_4,
         COALESCE(SUM(CASE WHEN status = 1 THEN total_price ELSE 0 END), 0) as paid
       FROM ${TABLE_ROOM}
       WHERE bill_id = ? AND status != 2
@@ -1102,6 +1157,7 @@ export const getBillRoomList = async (req, res) => {
           status_1: summary.status_1,
           status_0: summary.status_0,
           status_3: status_3,
+          status_4: summary.status_4,
           paid: formatPrice(summary.paid)
         },
         total_rows: formatNumber(totalCount),
@@ -1447,6 +1503,246 @@ export const getSummaryData = async (req, res) => {
   }
 };
 
+/**
+ * Helper function to remove prefix from member name
+ * @param {string} memberName - Full member name with prefix
+ * @returns {string} Member name without prefix
+ */
+function removePrefix(memberName) {
+  if (!memberName) return memberName;
+
+  const prefixes = [
+    'นาย', 'นาง', 'นางสาว', 'เด็กชาย', 'เด็กหญิง', 'คุณ',
+    'Mr.', 'Mrs.', 'Miss', 'Ms.', 'Dr.'
+  ];
+
+  let result = memberName.trim();
+
+  for (const prefix of prefixes) {
+    // ตรวจสอบว่าขึ้นต้นด้วย prefix + space หรือไม่
+    if (result.startsWith(prefix + ' ')) {
+      result = result.substring(prefix.length + 1).trim();
+      break;
+    }
+    // ตรวจสอบว่าขึ้นต้นด้วย prefix เฉยๆ (ไม่มี space)
+    if (result.startsWith(prefix)) {
+      result = result.substring(prefix.length).trim();
+      break;
+    }
+  }
+
+  return result;
+}
+
+export const getBillRoomPendingList = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, keyword, customer_id, house_no, bill_type_id, status } = req.query;
+
+    if (!customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ customer_id',
+        required: ['customer_id']
+      });
+    }
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const offset = (pageNum - 1) * limitNum;
+
+    const db = getDatabase();
+    const currentDate = new Date();
+
+    // Build WHERE clause
+    // Base condition: customer_id and not deleted
+    let whereClause = 'WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2';
+    let queryParams = [customer_id];
+
+    // Status filter
+    // status = -1 or undefined: show status 0, 3, 4 (pending, overdue, partial payment)
+    // status = specific value: filter by that status
+    const statusValue = status !== undefined && status !== '' ? parseInt(status) : -1;
+
+    if (statusValue === -1) {
+      // Show only pending statuses: 0, 3, 4 (pending, overdue, partial payment)
+      // Status 3 is calculated (status=0 + overdue)
+      // Status 4 can be in DB or calculated (has partial payment)
+      // So we need to include both status=0 and status=4 from DB
+      whereClause += ' AND (br.status = 0 OR br.status = 4)';
+    } else {
+      // Filter by specific status
+      // Status 0 = รอชำระ (ยังไม่เลยกำหนด, ไม่มียอดชำระ)
+      // Status 3 = เกินกำหนด (เลยกำหนดแล้ว)
+      // Status 4 = ชำระบางส่วน (partial payment)
+      if (statusValue === 0 || statusValue === 3) {
+        // Both are DB status = 0, will be separated by calculation
+        whereClause += ' AND br.status = 0';
+      } else if (statusValue === 4) {
+        // Status 4 can be in DB or calculated, so we get both 0 and 4
+        whereClause += ' AND (br.status = 0 OR br.status = 4)';
+      } else {
+        whereClause += ' AND br.status = ?';
+        queryParams.push(statusValue);
+      }
+    }
+
+    // Bill type filter
+    if (bill_type_id !== undefined && bill_type_id !== '' && parseInt(bill_type_id) !== 0) {
+      whereClause += ' AND b.bill_type_id = ?';
+      queryParams.push(parseInt(bill_type_id));
+    }
+
+    // Optional house_no filter
+    if (house_no && house_no.trim() !== '') {
+      whereClause += ' AND br.house_no = ?';
+      queryParams.push(house_no.trim());
+    }
+
+    // Keyword search
+    if (keyword && keyword.trim() !== '') {
+      whereClause += ' AND (br.bill_no LIKE ? OR br.member_name LIKE ? OR br.house_no LIKE ? OR b.title LIKE ?)';
+      const searchTerm = `%${keyword.trim()}%`;
+      queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    // Count total
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_ROOM} br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      ${whereClause}
+    `;
+    const [countResult] = await db.execute(countQuery, queryParams);
+    const total = countResult[0].total;
+
+    // Get data with pagination
+    const dataQuery = `
+      SELECT
+        br.id,
+        br.bill_no,
+        br.member_name,
+        br.house_no,
+        br.total_price,
+        br.status as original_status,
+        b.title,
+        b.expire_date,
+        COALESCE(SUM(bt.transaction_amount), 0) as total_paid,
+        (br.total_price - COALESCE(SUM(bt.transaction_amount), 0)) as remaining_amount
+      FROM ${TABLE_ROOM} br
+      INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      LEFT JOIN bill_transaction_information bt ON br.id = bt.bill_room_id AND bt.status != 2
+      ${whereClause}
+      GROUP BY br.id, br.bill_no, br.member_name, br.house_no, br.total_price, br.status, b.title, b.expire_date
+      ORDER BY b.expire_date DESC, br.create_date DESC
+      LIMIT ${limitNum} OFFSET ${offset}
+    `;
+
+    const [rows] = await db.execute(dataQuery, queryParams);
+
+    // Format data with status adjustment and filter by specific status if needed
+    let formattedRows = rows.map(row => {
+      const expireDate = new Date(row.expire_date);
+      const isOverdue = currentDate > expireDate;
+
+      // Adjust status: if original_status = 0 and overdue, change to 3
+      // But also check if there's partial payment (total_paid > 0 but < total_price)
+      let adjustedStatus = row.original_status;
+      const totalPaid = parseFloat(row.total_paid);
+      const totalPrice = parseFloat(row.total_price);
+
+      if (row.original_status === 0) {
+        if (totalPaid > 0 && totalPaid < totalPrice) {
+          // มียอดชำระบางส่วน
+          adjustedStatus = 4;
+        } else if (isOverdue) {
+          // เลยกำหนดชำระ
+          adjustedStatus = 3;
+        }
+      }
+
+      return {
+        id: row.id,
+        bill_no: row.bill_no,
+        member_name: row.member_name,
+        member_real_name: removePrefix(row.member_name),
+        house_no: row.house_no,
+        title: row.title,
+        total_price: formatPrice(row.total_price),
+        total_paid: formatPrice(totalPaid),
+        remaining_amount: formatPrice(parseFloat(row.remaining_amount)),
+        expire_date: addFormattedDates({ expire_date: row.expire_date }, ['expire_date']).expire_date_formatted,
+        status: adjustedStatus
+      };
+    });
+
+    // Filter by specific status after calculation if status filter is applied
+    if (statusValue !== -1) {
+      if (statusValue === 0) {
+        // Show only non-overdue pending bills (status = 0 and not overdue)
+        formattedRows = formattedRows.filter(row => row.status === 0);
+      } else if (statusValue === 3) {
+        // Show only overdue bills (status = 3)
+        formattedRows = formattedRows.filter(row => row.status === 3);
+      } else if (statusValue === 4) {
+        // Show only partial payment bills (status = 4)
+        // This will be implemented when partial payment feature is added
+        formattedRows = formattedRows.filter(row => row.status === 4);
+      }
+    }
+
+    // Update total count to match filtered results
+    const filteredTotal = formattedRows.length;
+
+    res.json({
+      success: true,
+      data: formattedRows,
+      pagination: {
+        current_page: pageNum,
+        per_page: limitNum,
+        total: filteredTotal,
+        total_pages: Math.ceil(filteredTotal / limitNum),
+        has_next: pageNum * limitNum < filteredTotal,
+        has_prev: pageNum > 1
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill room pending list error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill room pending list',
+      message: error.message
+    });
+  }
+};
+
+export const getBillStatus = async (req, res) => {
+  try {
+    const statusList = [
+      { id: -1, title: 'ทุกสถานะ' },
+      { id: 0, title: 'รอชำระ' },
+      { id: 3, title: 'เกินกำหนด' },
+      { id: 4, title: 'ชำระบางส่วน' }
+    ];
+
+    res.json({
+      success: true,
+      data: statusList,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill status error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill status',
+      message: error.message
+    });
+  }
+};
+
 export const getBillExcelList = async (req, res) => {
   try {
     const { upload_key } = req.query;
@@ -1494,31 +1790,16 @@ export const getBillExcelList = async (req, res) => {
       });
     }
 
-    // Step 3: Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({
-        success: false,
-        error: 'File not found on server',
-        message: 'ไม่พบไฟล์บนเซิร์ฟเวอร์'
-      });
-    }
-
-    // Step 4: Read and parse Excel/CSV file
+    // Step 3: Read and parse Excel/CSV file
     let workbook;
     try {
-      // สำหรับ CSV ต้องอ่านด้วย UTF-8 encoding
-      if (fileExt === 'csv') {
-        const fileContent = fs.readFileSync(filePath, 'utf8');
-        workbook = xlsx.read(fileContent, { type: 'string', codepage: 65001 });
-      } else {
-        workbook = xlsx.readFile(filePath);
-      }
+      workbook = await readExcelFile(filePath, fileExt);
     } catch (error) {
       logger.error('Error reading file:', error);
       return res.status(400).json({
         success: false,
         error: 'Failed to read file',
-        message: 'ไม่สามารถอ่านไฟล์ได้ ไฟล์อาจเสียหาย'
+        message: 'ไม่สามารถอ่านไฟล์ได้ ไฟล์อาจเสียหาย หรือไม่พบไฟล์บนเซิร์ฟเวอร์'
       });
     }
 
@@ -1539,7 +1820,7 @@ export const getBillExcelList = async (req, res) => {
     const data = xlsx.utils.sheet_to_json(worksheet, {
       defval: null,
       blankrows: false,
-      raw: false
+      raw: false  // แปลง value เป็น string เพื่อให้ใช้งานง่าย
     });
 
     // Step 5: Validate file data
@@ -1577,7 +1858,20 @@ export const getBillExcelList = async (req, res) => {
       const row = data[i];
       const rowNum = i + 1; // ลำดับที่แสดงใน UI (เริ่มจาก 1)
 
-      const houseNoRaw = row['เลขห้อง'];
+      // แปลงเลขห้อง: ถ้าเป็น date string ที่มีรูปแบบ "11/1/01" หรือ "1/11/01" ให้แปลงเป็น "11/01"
+      let houseNoRaw = row['เลขห้อง'];
+      if (houseNoRaw && typeof houseNoRaw === 'string') {
+        // ตรวจสอบว่าเป็น date format 3 ส่วน (เช่น "11/1/01" หรือ "1/11/01")
+        const datePattern = /^(\d{1,2})\/(\d{1,2})\/(\d{1,2})$/;
+        const match = houseNoRaw.match(datePattern);
+        if (match) {
+          // เลือกเอา 2 ส่วนแรก มาเป็นเลขห้อง (ส่วนที่ 1 และ 2)
+          const part1 = match[1].padStart(2, '0');
+          const part2 = match[2].padStart(2, '0');
+          houseNoRaw = `${part1}/${part2}`;
+        }
+      }
+
       const memberNameRaw = row['ชื่อลูกบ้าน'];
       const totalPriceRaw = row['ยอดเงิน'];
       const remarkRaw = row['หมายเหตุ'];

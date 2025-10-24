@@ -19,6 +19,11 @@ npm run dev
 npm start
 ```
 
+**Port Configuration:**
+- Port 3000: API backend (default, in use)
+- Port 3001: Next.js frontend
+- For testing: Use alternative ports (3002, 3003, etc.) to avoid conflicts
+
 ## Architecture
 
 **Framework**: Express.js with ES6 modules
@@ -74,20 +79,30 @@ kconnect_backend/
 
 MySQL connection configured via .env file:
 - `DB_HOST` - Database host (default: localhost)
+- `DB_PORT` - Database port (default: 3306)
 - `DB_USER` - Database user (default: root)
 - `DB_PASSWORD` - Database password
 - `DB_NAME` - Database name (default: kconnect)
-- `PORT` - Server port (default: 3000)
+- `PORT` - Server port (default: 3000, Railway auto-assigns port in production)
 - `NODE_ENV` - Environment mode (development/production)
 - `DOMAIN` - Base URL for file paths (default: http://localhost:3000)
 
 **Connection Pattern**: Single MySQL connection created on startup via `mysql2/promise`
 
+**Environment Configuration**:
+- **Local Development**: Uses `.env` file with localhost database
+- **Production (Railway)**: Uses environment variables set in Railway dashboard
+  - Railway Variables override local `.env` file
+  - Database uses private network (`mysql.railway.internal` or `mysql`)
+  - PORT is dynamically assigned by Railway
+  - Server listens on `0.0.0.0` for external access
+
 ## API Endpoints
 
 ### General
-- `GET /api/test` - Test endpoint returning API status and timestamp
+- `GET /` - Root endpoint returning API information and available endpoints
 - `GET /health` - Health check endpoint
+- `GET /api/test` - Test endpoint returning API status and timestamp
 
 ### Test Data & Table Creation
 - `GET /api/test-data/insert_data` - Insert random data into test_list table
@@ -104,6 +119,8 @@ MySQL connection configured via .env file:
 - `GET /api/test-data/create_payment_information` - Create payment_information table
 - `GET /api/test-data/create_payment_attachment` - Create payment_attachment table
 - `GET /api/test-data/create_payment_type_information` - Create payment_type_information table with default data
+- `GET /api/test-data/create_bill_transaction_information` - Create bill_transaction_information table
+- `GET /api/test-data/create_bill_transaction_type_information` - Create bill_transaction_type_information table with default data
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -153,6 +170,10 @@ MySQL connection configured via .env file:
 
 ### Payment Type API
 - `GET /api/payment_type/list` - List payment types with pagination
+
+### Bill Transaction API
+- `POST /api/bill_transaction/insert` - Insert bill transaction (manual payment entry by admin)
+- `GET /api/bill_transaction/bill_transaction_type` - Get bill transaction type list
 
 ### File Upload API
 - `POST /api/upload_file` - Upload files to specific module (menu + upload_key)
@@ -308,10 +329,11 @@ MySQL connection configured via .env file:
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
 
-**payment_information table:**
+**payment_information table (Polymorphic Association):**
 - `id` - INT AUTO_INCREMENT PRIMARY KEY
 - `upload_key` - CHAR(32) NOT NULL
-- `bill_room_id` - INT NOT NULL (references bill_room_information.id)
+- `payable_type` - VARCHAR(50) NOT NULL (e.g., 'bill_room_information', 'fine_information')
+- `payable_id` - INT NOT NULL (references id in payable_type table)
 - `payment_amount` - DOUBLE NOT NULL
 - `payment_type_id` - INT NOT NULL
 - `customer_id` - VARCHAR(255) NOT NULL
@@ -324,6 +346,7 @@ MySQL connection configured via .env file:
 - `update_by` - INT NULL
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
+- `INDEX idx_payable (payable_type, payable_id)` - Composite index for performance
 
 **payment_attachment table:**
 - `id` - INT AUTO_INCREMENT PRIMARY KEY
@@ -353,6 +376,45 @@ MySQL connection configured via .env file:
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
 - Default data: 1=Mobile Banking (ชำระผ่านแอปธนาคาร, status=0), 2=โอนผ่านธนาคาร (โอนเงินแล้วแนบสลิป, status=1), 3=ชำระที่นิติบุคคล (ชำระกับทางนิติบุคคลโดยตรง, status=0)
+
+**bill_transaction_information table (Transaction log for all bill payments):**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `bill_room_id` - INT NOT NULL (references bill_room_information.id)
+- `payment_id` - INT NULL (references payment_information.id, NULL if manual entry by admin)
+- `transaction_amount` - DECIMAL(10,2) NOT NULL
+- `bill_transaction_type_id` - INT NULL (references bill_transaction_type_information.id, NULL if from payment approval)
+- `transaction_type_json` - JSON NULL (additional payment method details)
+- `transaction_date` - TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP (when transaction recorded)
+- `pay_date` - TIMESTAMP NOT NULL (actual payment date)
+- `transaction_type` - ENUM('full', 'partial') NOT NULL DEFAULT 'full'
+- `remark` - TEXT NULL
+- `customer_id` - VARCHAR(50) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+- Indexes: idx_bill_room_id, idx_payment_id, idx_customer_id, idx_pay_date
+- **Logic**:
+  - Manual entry (admin): payment_id=NULL, bill_transaction_type_id=INT (required)
+  - System approved: payment_id=INT, bill_transaction_type_id=NULL
+  - Partial payment tracking: Sum of transaction_amount determines bill_room_information.status
+  - Automatic status update: newTotalPaid >= totalPrice → status=1 (paid), otherwise status=4 (partial)
+
+**bill_transaction_type_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `title` - VARCHAR(255) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+- Default data: 1=เงินสด, 2=โอนเงินธนาคาร, 3=เช็ค, 4=บัตรเครดิต, 5=อื่นๆ
 
 ### API Parameters
 
@@ -467,10 +529,12 @@ MySQL connection configured via .env file:
   - Response includes: remark field
 
 **Payment API:**
-- **Insert**: `{upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, uid, remark?}` via `/api/payment/insert`
-  - Required: upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, uid
+- **Insert**: `{upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, uid, remark?}` via `/api/payment/insert`
+  - Required: upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, uid
   - Optional: remark
   - payment_amount is DOUBLE type
+  - Uses Polymorphic Association: payable_type + payable_id (e.g., payable_type='bill_room_information', payable_id=19)
+  - Validation: Checks if payment_attachment exists with status=1 before insert (requires payment slip)
 - **Update**: `{ids, uid, status, remark?}` via `/api/payment/update`
   - Required: ids (array of integers), uid, status
   - Optional: remark (required if status=3)
@@ -527,14 +591,15 @@ MySQL connection configured via .env file:
   - Returns 0 if no records found for tab2/tab3/tab4
 - **Detail**: `/api/payment/{id}` - Get single payment by ID
   - Returns complete payment information with joined data:
-    - Payment information: id, upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, remark
+    - Payment information: id, upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark
     - Member information: member_name, member_real_name, prefix_name, phone_number, email, member_detail, room_title
-    - Bill room information: bill_no, house_no, bill_total_price
-    - Bill information: bill_id, bill_title, bill_type_id, bill_type_title, expire_date, send_date
+    - Bill room information (if payable_type='bill_room_information'): bill_no, house_no, bill_total_price
+    - Bill information (if payable_type='bill_room_information'): bill_id, bill_title, bill_type_id, bill_type_title, expire_date, send_date
     - Payment type information: payment_type_title, payment_type_detail
     - Audit fields: create_date, create_by, update_date, update_by, delete_date, delete_by
   - All date fields formatted with _formatted suffix (DD/MM/YYYY HH:mm:ss)
   - payment_amount and bill_total_price formatted with ฿ prefix
+  - Uses Polymorphic Association: LEFT JOIN based on payable_type and payable_id
   - Returns 404 if payment not found or deleted (status=2)
 
 **Payment Type API:**
@@ -542,6 +607,37 @@ MySQL connection configured via .env file:
   - All parameters optional
   - Default limit: 100
   - Keyword search includes: title, detail
+
+**Bill Transaction API:**
+- **Insert**: `{bill_room_id, bill_transaction_type_id, transaction_amount, pay_date, transaction_type_json?, remark?, customer_id, uid}` via `/api/bill_transaction/insert`
+  - Required: bill_room_id, bill_transaction_type_id, transaction_amount, pay_date, customer_id, uid
+  - Optional: transaction_type_json (JSON object with additional payment details), remark
+  - transaction_amount is DECIMAL(10,2)
+  - bill_transaction_type_id must exist in bill_transaction_type_information table
+  - Automatically determines transaction_type (full/partial) based on total paid vs total price
+  - Automatically updates bill_room_information.status (4=partial payment, 1=paid)
+  - Returns summary with: transaction data, bill_room_status, total_paid, total_price, remaining
+  - Example transaction_type_json for cash (ID=1):
+    ```json
+    {
+      "bill_transaction_type_id": 1,
+      "received_by": "แม่บ้าน สมหญิง",
+      "receipt_no": "CASH-20251024-001"
+    }
+    ```
+  - Example transaction_type_json for bank transfer (ID=2):
+    ```json
+    {
+      "bill_transaction_type_id": 2,
+      "bank_name": "ธนาคารกสิกรไทย",
+      "account_number": "xxx-x-xxxxx-x",
+      "transfer_date": "2025-10-24 14:30:00",
+      "reference_no": "TRF202510240001"
+    }
+    ```
+- **Bill Transaction Type List**: No parameters via `/api/bill_transaction/bill_transaction_type`
+  - Returns all active transaction types (status != 2)
+  - Default data: 1=เงินสด, 2=โอนเงินธนาคาร, 3=เช็ค, 4=บัตรเครดิต, 5=อื่นๆ
 
 **File Upload API:**
 - **Upload**: `{upload_key, menu}` + files via form-data to `/api/upload_file`
@@ -673,14 +769,22 @@ const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
 - **File Types**: Default: jpeg, jpg, png, gif, pdf, doc, docx, txt, zip, rar, xlsx, xls, csv (configurable via `app_config.allowed_file_types`)
 - **Size Limit**: Default: 10MB per file (configurable via `app_config.max_file_size`)
 - **File Count Limit**: Default: 5 files per upload_key (configurable via `app_config.max_file_count`)
-- **Dynamic Storage**: Files stored in `uploads/{menu}/` based on menu parameter
+- **Storage Options**: Supports both Firebase Storage and local project storage
+  - **Firebase Mode** (`UPLOAD_TYPE=firebase`): Files uploaded to Firebase Storage with public URLs
+  - **Project Mode** (`UPLOAD_TYPE=project`): Files stored locally in `uploads/{menu}/` directory
+  - **Smart URL Building**: Automatically detects Firebase URLs vs local paths for correct URL formatting
+- **Dynamic Storage**: Files organized by menu/module name
 - **Table Auto-Detection**: Uses `{menu}_attachment` table structure
 - **Thai Filename Support**: Automatically handles Thai characters in filenames from both Postman (UTF-8) and browsers (latin1 encoding)
 - **Validation**:
   - Checks table existence before upload
   - Validates file size, type, and total file count
   - Counts existing files for upload_key before allowing new uploads
-- **File URL**: Returns full URL using DOMAIN environment variable
+- **File URL**: Returns full URL (Firebase public URL or DOMAIN + local path)
+- **Soft Delete Behavior**:
+  - Deleting files only marks them as deleted in database (status=2)
+  - **Files are kept in storage** (Firebase or local) as backup for recovery
+  - No physical file deletion occurs on soft delete operations
 
 ## Error Handling
 
@@ -744,6 +848,12 @@ const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
     - CSV encoding: UTF-8 (automatically detected and handled)
     - Required columns: เลขห้อง, ชื่อลูกบ้าน, ยอดเงิน
     - Optional columns: หมายเหตุ
+  - **Storage Compatibility**:
+    - Supports reading Excel/CSV from both Firebase Storage URLs and local file paths
+    - Automatically detects file location and uses appropriate reading method
+    - Firebase: Downloads file via HTTP/HTTPS before parsing
+    - Local: Reads directly from filesystem
+    - Works seamlessly with `UPLOAD_TYPE` environment setting
   - **Validation**:
     - Validates file type (.xlsx, .xls, .csv)
     - Detects and rejects HTML-based .xls files (must be native Excel format)

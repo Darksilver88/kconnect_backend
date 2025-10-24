@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm install)",
       "Bash(rm:*)",
-      "Read(//Users/anusornkongthong/Desktop/**)"
+      "Read(//Users/anusornkongthong/Desktop/**)",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []

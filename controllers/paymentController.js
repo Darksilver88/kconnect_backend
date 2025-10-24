@@ -2,20 +2,21 @@ import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addFormattedDatesToList } from '../utils/dateFormatter.js';
 import { formatPrice } from '../utils/numberFormatter.js';
+import { getFileUrl } from '../utils/storageManager.js';
 
 const MENU = 'payment';
 const TABLE_INFORMATION = `${MENU}_information`;
 
 export const insertPayment = async (req, res) => {
   try {
-    const { upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, uid } = req.body;
+    const { upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, uid } = req.body;
 
-    if (!upload_key || !bill_room_id || !payment_amount || !payment_type_id || !customer_id || status === undefined || !member_id || !uid) {
+    if (!upload_key || !payable_type || !payable_id || !payment_amount || !payment_type_id || !customer_id || status === undefined || !member_id || !uid) {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
-        message: 'กรุณากรอกข้อมูลที่จำเป็น: upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, uid',
-        required: ['upload_key', 'bill_room_id', 'payment_amount', 'payment_type_id', 'customer_id', 'status', 'member_id', 'uid']
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, uid',
+        required: ['upload_key', 'payable_type', 'payable_id', 'payment_amount', 'payment_type_id', 'customer_id', 'status', 'member_id', 'uid']
       });
     }
 
@@ -38,18 +39,19 @@ export const insertPayment = async (req, res) => {
     }
 
     const insertQuery = `
-      INSERT INTO ${TABLE_INFORMATION} (upload_key, bill_room_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, create_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ${TABLE_INFORMATION} (upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, create_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const billRoomIdValue = parseInt(bill_room_id);
+    const payableIdValue = parseInt(payable_id);
     const paymentAmount = parseFloat(payment_amount);
     const paymentTypeIdValue = parseInt(payment_type_id);
     const memberIdValue = parseInt(member_id);
 
     const [result] = await db.execute(insertQuery, [
       upload_key?.trim(),
-      billRoomIdValue,
+      payable_type?.trim(),
+      payableIdValue,
       paymentAmount,
       paymentTypeIdValue,
       customer_id?.trim(),
@@ -65,7 +67,8 @@ export const insertPayment = async (req, res) => {
       data: {
         id: result.insertId,
         upload_key,
-        bill_room_id: billRoomIdValue,
+        payable_type: payable_type?.trim(),
+        payable_id: payableIdValue,
         payment_amount: paymentAmount,
         payment_type_id: paymentTypeIdValue,
         customer_id,
@@ -139,9 +142,9 @@ export const updatePayment = async (req, res) => {
 
     for (const id of ids) {
       try {
-        // Check if payment exists and status is 0
+        // Check if payment exists and status is 0, also get payable info
         const checkQuery = `
-          SELECT id, status FROM ${TABLE_INFORMATION}
+          SELECT id, status, payable_type, payable_id FROM ${TABLE_INFORMATION}
           WHERE id = ? AND status != 2
         `;
         const [rows] = await db.execute(checkQuery, [id]);
@@ -163,6 +166,8 @@ export const updatePayment = async (req, res) => {
           continue;
         }
 
+        const paymentData = rows[0];
+
         // Update payment
         const updateQuery = `
           UPDATE ${TABLE_INFORMATION}
@@ -178,6 +183,73 @@ export const updatePayment = async (req, res) => {
         ]);
 
         if (result.affectedRows > 0) {
+          // ถ้าอนุมัติ (status = 1) และเป็น bill_room_information
+          if (statusValue === 1 && paymentData.payable_type === 'bill_room_information') {
+            try {
+              // 1. Get payment details (amount, customer_id)
+              const getPaymentQuery = `SELECT payment_amount, customer_id FROM ${TABLE_INFORMATION} WHERE id = ?`;
+              const [paymentRows] = await db.execute(getPaymentQuery, [id]);
+              const payment = paymentRows[0];
+
+              // 2. Get bill_room details (total_price)
+              const getBillRoomQuery = `SELECT total_price FROM bill_room_information WHERE id = ?`;
+              const [billRoomRows] = await db.execute(getBillRoomQuery, [paymentData.payable_id]);
+
+              if (billRoomRows.length > 0) {
+                const billRoom = billRoomRows[0];
+                const totalPrice = parseFloat(billRoom.total_price);
+                const paymentAmount = parseFloat(payment.payment_amount);
+
+                // 3. Check existing transactions
+                const [existingTransactions] = await db.execute(
+                  'SELECT COALESCE(SUM(transaction_amount), 0) as total_paid FROM bill_transaction_information WHERE bill_room_id = ? AND status != 2',
+                  [paymentData.payable_id]
+                );
+                const totalPaid = parseFloat(existingTransactions[0].total_paid);
+                const newTotalPaid = totalPaid + paymentAmount;
+
+                // 4. Determine transaction type and bill_room status
+                let transactionType = 'partial';
+                let newBillRoomStatus = 4; // partial payment
+
+                if (newTotalPaid >= totalPrice) {
+                  transactionType = 'full';
+                  newBillRoomStatus = 1; // paid
+                }
+
+                // 5. Insert transaction record
+                // bill_transaction_type_id = NULL for system approved payments (payment_id is set)
+                const insertTransactionQuery = `
+                  INSERT INTO bill_transaction_information
+                  (bill_room_id, payment_id, transaction_amount, bill_transaction_type_id, transaction_type_json, pay_date, transaction_type, remark, customer_id, status, create_by)
+                  VALUES (?, ?, ?, NULL, NULL, NOW(), ?, ?, ?, 1, ?)
+                `;
+                await db.execute(insertTransactionQuery, [
+                  paymentData.payable_id,
+                  id,
+                  paymentAmount,
+                  transactionType,
+                  remark?.trim() || null,
+                  payment.customer_id,
+                  uid
+                ]);
+
+                // 6. Update bill_room status
+                const updateBillRoomQuery = `
+                  UPDATE bill_room_information
+                  SET status = ?, update_date = NOW(), update_by = ?
+                  WHERE id = ? AND status != 2
+                `;
+                await db.execute(updateBillRoomQuery, [newBillRoomStatus, uid, paymentData.payable_id]);
+
+                logger.info(`Approved payment id=${id}: Created transaction, updated bill_room_information id=${paymentData.payable_id} status=${newBillRoomStatus} (${transactionType} payment)`);
+              }
+            } catch (billRoomError) {
+              logger.error(`Failed to process bill_room_information id=${paymentData.payable_id}:`, billRoomError);
+              // ไม่ต้อง fail ทั้งหมด เพียงแค่ log error
+            }
+          }
+
           results.success.push({
             id: parseInt(id),
             status,
@@ -298,7 +370,7 @@ export const getPaymentList = async (req, res) => {
       FROM ${TABLE_INFORMATION} p
       LEFT JOIN member_information m ON p.member_id = m.id
       LEFT JOIN room_information r ON m.room_id = r.id
-      LEFT JOIN bill_room_information br ON p.bill_room_id = br.id
+      LEFT JOIN bill_room_information br ON p.payable_type = 'bill_room_information' AND p.payable_id = br.id
       LEFT JOIN bill_information b ON br.bill_id = b.id
       ${whereClause}
     `;
@@ -306,7 +378,7 @@ export const getPaymentList = async (req, res) => {
     const total = countResult[0].total;
 
     const dataQuery = `
-      SELECT p.id, p.upload_key, p.bill_room_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark,
+      SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark,
              p.create_date, p.create_by, p.update_date, p.update_by, p.delete_date, p.delete_by,
              CONCAT(m.prefix_name, m.full_name) as member_name,
              m.full_name as member_real_name,
@@ -317,7 +389,7 @@ export const getPaymentList = async (req, res) => {
       FROM ${TABLE_INFORMATION} p
       LEFT JOIN member_information m ON p.member_id = m.id
       LEFT JOIN room_information r ON m.room_id = r.id
-      LEFT JOIN bill_room_information br ON p.bill_room_id = br.id
+      LEFT JOIN bill_room_information br ON p.payable_type = 'bill_room_information' AND p.payable_id = br.id
       LEFT JOIN bill_information b ON br.bill_id = b.id
       LEFT JOIN payment_type_information pt ON p.payment_type_id = pt.id
       ${whereClause}
@@ -379,6 +451,17 @@ export const getPaymentSummaryStatus = async (req, res) => {
 
     const db = getDatabase();
 
+    // Tab 1: bill_room_information ที่ status = 0 (รอชำระ)
+    const tab1Query = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND br.status = 0
+    `;
+    const [tab1Result] = await db.execute(tab1Query, [customer_id]);
+    const tab1 = tab1Result[0].total;
+
+    // Tab 2, 3, 4: payment_information status
     const summaryQuery = `
       SELECT
         SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) as tab2,
@@ -393,7 +476,7 @@ export const getPaymentSummaryStatus = async (req, res) => {
     res.json({
       success: true,
       data: {
-        tab1: 99,
+        tab1,
         tab2: parseInt(rows[0].tab2) || 0,
         tab3: parseInt(rows[0].tab3) || 0,
         tab4: parseInt(rows[0].tab4) || 0
@@ -427,7 +510,7 @@ export const getPaymentDetail = async (req, res) => {
     const db = getDatabase();
 
     const detailQuery = `
-      SELECT p.id, p.upload_key, p.bill_room_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark,
+      SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark,
              p.create_date, p.create_by, p.update_date, p.update_by, p.delete_date, p.delete_by,
              CONCAT(m.prefix_name, m.full_name) as member_name,
              m.full_name as member_real_name,
@@ -443,7 +526,7 @@ export const getPaymentDetail = async (req, res) => {
       FROM ${TABLE_INFORMATION} p
       LEFT JOIN member_information m ON p.member_id = m.id
       LEFT JOIN room_information r ON m.room_id = r.id
-      LEFT JOIN bill_room_information br ON p.bill_room_id = br.id
+      LEFT JOIN bill_room_information br ON p.payable_type = 'bill_room_information' AND p.payable_id = br.id
       LEFT JOIN bill_information b ON br.bill_id = b.id
       LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
       LEFT JOIN payment_type_information pt ON p.payment_type_id = pt.id
@@ -481,15 +564,14 @@ export const getPaymentDetail = async (req, res) => {
     `;
     const [attachmentRows] = await db.execute(attachmentQuery, [formattedData.upload_key]);
 
-    // Add domain to file_path and format dates for attachment
-    const domain = process.env.DOMAIN || 'http://localhost:3000';
+    // Format attachment with smart URL building
     let formattedAttachment = null;
 
     if (attachmentRows.length > 0) {
       const attachment = attachmentRows[0];
       formattedAttachment = {
         ...addFormattedDatesToList([attachment], ['create_date'])[0],
-        file_path: `${domain}/${attachment.file_path}`
+        file_path: getFileUrl(attachment.file_path)
       };
     }
 
@@ -507,6 +589,86 @@ export const getPaymentDetail = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch payment detail',
+      message: error.message
+    });
+  }
+};
+
+export const getPaymentSummaryStatus2 = async (req, res) => {
+  try {
+    const { customer_id } = req.query;
+
+    if (!customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ customer_id',
+        required: ['customer_id']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Card 1: bill_room_information ที่ status = 0 (รอชำระ)
+    const card1Query = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND br.status = 0
+    `;
+    const [card1Result] = await db.execute(card1Query, [customer_id]);
+    const card1 = card1Result[0].total;
+
+    // Card 2: bill_room_information ที่ status = 0 และเลยวันครบกำหนด (expire_date < วันปัจจุบัน)
+    const card2Query = `
+      SELECT COUNT(*) as total
+      FROM bill_room_information br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE b.customer_id = ? AND br.status = 0 AND b.expire_date < CURDATE()
+    `;
+    const [card2Result] = await db.execute(card2Query, [customer_id]);
+    const card2 = card2Result[0].total;
+
+    // Card 3: ยอดค้างรวม (total_price - total_paid) ของ bill_room_information ที่ status = 0 หรือ 4
+    const card3Query = `
+      SELECT
+        br.id,
+        br.total_price,
+        COALESCE(SUM(bt.transaction_amount), 0) as total_paid
+      FROM bill_room_information br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      LEFT JOIN bill_transaction_information bt ON br.id = bt.bill_room_id AND bt.status != 2
+      WHERE b.customer_id = ? AND (br.status = 0 OR br.status = 4)
+      GROUP BY br.id, br.total_price
+    `;
+    const [card3Result] = await db.execute(card3Query, [customer_id]);
+
+    // คำนวณยอดค้างรวม (total_price - total_paid)
+    let card3Total = 0;
+    card3Result.forEach(row => {
+      const totalPrice = parseFloat(row.total_price);
+      const totalPaid = parseFloat(row.total_paid);
+      const remaining = totalPrice - totalPaid;
+      card3Total += remaining > 0 ? remaining : 0; // เอาเฉพาะยอดค้างที่เป็นบวก
+    });
+
+    const card3 = formatPrice(card3Total);
+
+    res.json({
+      success: true,
+      data: {
+        card1,
+        card2,
+        card3
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Payment summary status2 error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch payment summary status2',
       message: error.message
     });
   }

@@ -697,7 +697,8 @@ export const createPaymentInformation = async (req, res) => {
       CREATE TABLE IF NOT EXISTS payment_information (
         id INT AUTO_INCREMENT PRIMARY KEY,
         upload_key CHAR(32) NOT NULL,
-        bill_room_id INT NOT NULL,
+        payable_type VARCHAR(50) NOT NULL,
+        payable_id INT NOT NULL,
         payment_amount DOUBLE NOT NULL,
         payment_type_id INT NOT NULL,
         customer_id VARCHAR(255) NOT NULL,
@@ -709,23 +710,26 @@ export const createPaymentInformation = async (req, res) => {
         update_date TIMESTAMP NULL,
         update_by INT NULL,
         delete_date TIMESTAMP NULL,
-        delete_by INT NULL
+        delete_by INT NULL,
+        INDEX idx_payable (payable_type, payable_id)
       )
     `;
 
     await db.execute(createTableQuery);
-    logger.info('Table payment_information checked/created');
+    logger.info('Table payment_information checked/created (Polymorphic pattern)');
 
     res.json({
       success: true,
-      message: 'Payment information table created successfully',
+      message: 'Payment information table created successfully (Polymorphic Association)',
       data: {
         table_name: 'payment_information',
         table_created: true,
+        pattern: 'Polymorphic Association (payable_type + payable_id)',
         fields: [
           'id',
           'upload_key',
-          'bill_room_id',
+          'payable_type',
+          'payable_id',
           'payment_amount',
           'payment_type_id',
           'customer_id',
@@ -738,6 +742,10 @@ export const createPaymentInformation = async (req, res) => {
           'update_by',
           'delete_date',
           'delete_by'
+        ],
+        indexes: [
+          'PRIMARY (id)',
+          'idx_payable (payable_type, payable_id)'
         ]
       },
       timestamp: new Date().toISOString()
@@ -884,6 +892,181 @@ export const createPaymentTypeInformation = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to create payment type information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBillTransactionInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_transaction_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        bill_room_id INT NOT NULL,
+        payment_id INT NULL,
+        transaction_amount DECIMAL(10,2) NOT NULL,
+        bill_transaction_type_id INT NULL COMMENT 'NULL if from payment approval, NOT NULL if manual entry',
+        transaction_type_json JSON NULL COMMENT 'Additional payment method details',
+        transaction_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        pay_date TIMESTAMP NOT NULL,
+        transaction_type ENUM('full', 'partial') NOT NULL DEFAULT 'full',
+        remark TEXT NULL,
+        customer_id VARCHAR(50) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL,
+        INDEX idx_bill_room_id (bill_room_id),
+        INDEX idx_payment_id (payment_id),
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_pay_date (pay_date)
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bill_transaction_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bill transaction information table created successfully',
+      data: {
+        table_name: 'bill_transaction_information',
+        table_created: true,
+        description: 'Transaction log for all bill payments (both self-payment and manual entry by admin)',
+        fields: [
+          'id',
+          'bill_room_id (FK to bill_room_information)',
+          'payment_id (FK to payment_information, NULL if admin manual entry)',
+          'transaction_amount',
+          'bill_transaction_type_id (INT FK to bill_transaction_type_information)',
+          'transaction_type_json (JSON - additional payment method details)',
+          'transaction_date (when transaction recorded)',
+          'pay_date (actual payment date)',
+          'transaction_type (full/partial)',
+          'remark',
+          'customer_id',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ],
+        indexes: [
+          'PRIMARY (id)',
+          'idx_bill_room_id (bill_room_id)',
+          'idx_payment_id (payment_id)',
+          'idx_customer_id (customer_id)',
+          'idx_pay_date (pay_date)'
+        ],
+        use_cases: [
+          '1. Record payment when admin approves (payment_id NOT NULL)',
+          '2. Record payment when admin manually enters (payment_id NULL)',
+          '3. Support partial payments (transaction_type = partial)',
+          '4. Calculate bill_room status based on sum(transaction_amount) vs total_price'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill transaction information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill transaction information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBillTransactionTypeInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bill_transaction_type_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      )
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bill_transaction_type_information checked/created');
+
+    const defaultTransactionTypes = [
+      { id: 1, title: 'เงินสด' },
+      { id: 2, title: 'โอนเงินธนาคาร' },
+      { id: 3, title: 'เช็ค' },
+      { id: 4, title: 'บัตรเครดิต' },
+      { id: 5, title: 'อื่นๆ' }
+    ];
+
+    const uploadKey = Math.random().toString(36).substring(2, 34);
+    const insertedTypes = [];
+
+    for (const type of defaultTransactionTypes) {
+      const insertQuery = `
+        INSERT IGNORE INTO bill_transaction_type_information (id, upload_key, title, status, create_by)
+        VALUES (?, ?, ?, 1, -1)
+      `;
+
+      const [result] = await db.execute(insertQuery, [
+        type.id,
+        uploadKey,
+        type.title
+      ]);
+
+      if (result.affectedRows > 0) {
+        insertedTypes.push({
+          id: type.id,
+          title: type.title
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Bill transaction type information table created and initialized successfully',
+      data: {
+        table_name: 'bill_transaction_type_information',
+        table_created: true,
+        types_inserted: insertedTypes,
+        total_types: insertedTypes.length,
+        fields: [
+          'id',
+          'upload_key',
+          'title',
+          'status',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bill transaction type information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bill transaction type information table',
       message: error.message
     });
   }
