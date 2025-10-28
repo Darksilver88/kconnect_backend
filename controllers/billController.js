@@ -1111,12 +1111,13 @@ export const getBillRoomList = async (req, res) => {
     // Get summary data by status (without keyword and status filters - show all)
     const summaryQuery = `
       SELECT
-        COUNT(CASE WHEN status = 1 THEN 1 END) as status_1,
-        COUNT(CASE WHEN status = 0 THEN 1 END) as status_0,
-        COUNT(CASE WHEN status = 4 THEN 1 END) as status_4,
-        COALESCE(SUM(CASE WHEN status = 1 THEN total_price ELSE 0 END), 0) as paid
-      FROM ${TABLE_ROOM}
-      WHERE bill_id = ? AND status != 2
+        COUNT(CASE WHEN br.status = 1 THEN 1 END) as status_1,
+        COUNT(CASE WHEN br.status = 0 THEN 1 END) as status_0,
+        COUNT(CASE WHEN br.status = 4 THEN 1 END) as status_4,
+        COALESCE(SUM(bt.transaction_amount), 0) as paid
+      FROM ${TABLE_ROOM} br
+      LEFT JOIN bill_transaction_information bt ON br.id = bt.bill_room_id AND bt.status != 2
+      WHERE br.bill_id = ? AND br.status != 2
     `;
     const [summaryResult] = await db.execute(summaryQuery, [parseInt(bill_id)]);
     const summary = summaryResult[0];
