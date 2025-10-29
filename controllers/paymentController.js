@@ -451,12 +451,12 @@ export const getPaymentSummaryStatus = async (req, res) => {
 
     const db = getDatabase();
 
-    // Tab 1: bill_room_information ที่ status = 0 (รอชำระ)
+    // Tab 1: bill_room_information ที่ status = 0 (รอชำระ) และ bill_information.status = 1 (ส่งแล้ว)
     const tab1Query = `
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status = 0
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
     `;
     const [tab1Result] = await db.execute(tab1Query, [customer_id]);
     const tab1 = tab1Result[0].total;
@@ -609,27 +609,27 @@ export const getPaymentSummaryStatus2 = async (req, res) => {
 
     const db = getDatabase();
 
-    // Card 1: bill_room_information ที่ status = 0 (รอชำระ)
+    // Card 1: bill_room_information ที่ status = 0 (รอชำระ) และ bill_information.status = 1 (ส่งแล้ว)
     const card1Query = `
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status = 0
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
     `;
     const [card1Result] = await db.execute(card1Query, [customer_id]);
     const card1 = card1Result[0].total;
 
-    // Card 2: bill_room_information ที่ status = 0 และเลยวันครบกำหนด (expire_date < วันปัจจุบัน)
+    // Card 2: bill_room_information ที่ status = 0 และเลยวันครบกำหนด (expire_date < วันปัจจุบัน) และ bill_information.status = 1 (ส่งแล้ว)
     const card2Query = `
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status = 0 AND b.expire_date < CURDATE()
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0 AND b.expire_date < CURDATE()
     `;
     const [card2Result] = await db.execute(card2Query, [customer_id]);
     const card2 = card2Result[0].total;
 
-    // Card 3: ยอดค้างรวม (total_price - total_paid) ของ bill_room_information ที่ status = 0 หรือ 4
+    // Card 3: ยอดค้างรวม (total_price - total_paid) ของ bill_room_information ที่ status = 0 หรือ 4 และ bill_information.status = 1 (ส่งแล้ว)
     const card3Query = `
       SELECT
         br.id,
@@ -638,7 +638,7 @@ export const getPaymentSummaryStatus2 = async (req, res) => {
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
       LEFT JOIN bill_transaction_information bt ON br.id = bt.bill_room_id AND bt.status != 2
-      WHERE b.customer_id = ? AND (br.status = 0 OR br.status = 4)
+      WHERE b.customer_id = ? AND b.status = 1 AND (br.status = 0 OR br.status = 4)
       GROUP BY br.id, br.total_price
     `;
     const [card3Result] = await db.execute(card3Query, [customer_id]);

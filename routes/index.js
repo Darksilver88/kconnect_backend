@@ -11,6 +11,7 @@ import billRoomRoutes from './billRoom.js';
 import billTransactionRoutes from './billTransaction.js';
 import paymentRoutes from './payment.js';
 import paymentTypeRoutes from './paymentType.js';
+import dashboardRoutes from './dashboard.js';
 
 const router = express.Router();
 
@@ -35,5 +36,6 @@ router.use('/bill_room', billRoomRoutes);
 router.use('/bill_transaction', billTransactionRoutes);
 router.use('/payment', paymentRoutes);
 router.use('/payment_type', paymentTypeRoutes);
+router.use('/dashboard', dashboardRoutes);
 
 export default router;

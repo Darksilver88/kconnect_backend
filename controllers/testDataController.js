@@ -239,6 +239,12 @@ export const createAppConfig = async (req, res) => {
         value: JSON.stringify(['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip', 'rar']),
         type: 'json',
         description: 'Allowed file extensions for upload'
+      },
+      {
+        key: 'notification_resend_interval_minutes',
+        value: '30',
+        type: 'number',
+        description: 'Minimum interval in minutes between notification resends'
       }
     ];
 
@@ -1067,6 +1073,158 @@ export const createBillTransactionTypeInformation = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to create bill transaction type information table',
+      message: error.message
+    });
+  }
+};
+
+export const createNotificationAudit = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS notification_audit_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        table_name VARCHAR(100) NOT NULL COMMENT 'ชื่อ table ต้นทาง เช่น bill_room_information, member_information',
+        rows_id INT NOT NULL COMMENT 'ID ของ row ใน table ต้นทาง',
+        title TEXT NULL COMMENT 'หัวข้อการแจ้งเตือน',
+        detail TEXT NULL COMMENT 'รายละเอียดการแจ้งเตือน',
+        topic VARCHAR(50) NULL COMMENT 'หัวข้อหมวดหมู่',
+        type VARCHAR(50) NULL COMMENT 'ประเภทการแจ้งเตือน',
+        receiver VARCHAR(255) NULL COMMENT 'ผู้รับการแจ้งเตือน',
+        customer_id VARCHAR(255) NOT NULL,
+        remark TEXT NULL COMMENT 'หมายเหตุ/เหตุผลในการส่งแจ้งเตือน',
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+
+        INDEX idx_table_rows (table_name, rows_id),
+        INDEX idx_customer (customer_id),
+        INDEX idx_create_date (create_date),
+        INDEX idx_table_rows_date (table_name, rows_id, create_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table notification_audit_information checked/created (Polymorphic pattern)');
+
+    res.json({
+      success: true,
+      message: 'Notification audit table created successfully (Polymorphic Association)',
+      data: {
+        table_name: 'notification_audit_information',
+        table_created: true,
+        pattern: 'Polymorphic Association (table_name + rows_id)',
+        description: 'Centralized notification audit log for multiple tables',
+        fields: [
+          'id',
+          'table_name (VARCHAR 100) - ชื่อ table ต้นทาง',
+          'rows_id (INT) - ID ของ row',
+          'title (TEXT) - หัวข้อการแจ้งเตือน',
+          'detail (TEXT) - รายละเอียดการแจ้งเตือน',
+          'topic (VARCHAR 50) - หัวข้อหมวดหมู่',
+          'type (VARCHAR 50) - ประเภทการแจ้งเตือน',
+          'receiver (VARCHAR 255) - ผู้รับการแจ้งเตือน',
+          'customer_id (VARCHAR 255)',
+          'remark (TEXT) - หมายเหตุ/เหตุผล',
+          'create_date (TIMESTAMP)',
+          'create_by (INT)'
+        ],
+        indexes: [
+          'PRIMARY (id)',
+          'idx_table_rows (table_name, rows_id)',
+          'idx_customer (customer_id)',
+          'idx_create_date (create_date)',
+          'idx_table_rows_date (table_name, rows_id, create_date)'
+        ],
+        use_cases: [
+          '1. Log notification when bill is sent (bill_room_information)',
+          '2. Log reminder notification (any table)',
+          '3. Check last notification time (prevent spam)',
+          '4. Support multiple notification sources'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create notification audit table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create notification audit table',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Clear all data from specified tables and reset AUTO_INCREMENT to 1
+ * GET /api/test-data/clear_tables
+ */
+export const clearTables = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const tables = [
+      'room_information',
+      'payment_information',
+      'payment_attachment',
+      'member_information',
+      'bill_transaction_information',
+      'bill_room_information',
+      'bill_information',
+      'bill_audit_information',
+      'bill_attachment',
+      'notification_audit_information'
+    ];
+
+    const results = [];
+
+    for (const table of tables) {
+      try {
+        // Delete all data
+        await db.execute(`DELETE FROM ${table}`);
+
+        // Reset AUTO_INCREMENT
+        await db.execute(`ALTER TABLE ${table} AUTO_INCREMENT = 1`);
+
+        results.push({
+          table: table,
+          status: 'success',
+          message: 'Data cleared and AUTO_INCREMENT reset to 1'
+        });
+
+        logger.info(`Table ${table} cleared and AUTO_INCREMENT reset`);
+      } catch (error) {
+        results.push({
+          table: table,
+          status: 'error',
+          message: error.message
+        });
+
+        logger.warn(`Failed to clear table ${table}:`, error.message);
+      }
+    }
+
+    const successCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+
+    res.json({
+      success: true,
+      message: `เคลียร์ข้อมูลเสร็จสิ้น: สำเร็จ ${successCount} tables, ล้มเหลว ${errorCount} tables`,
+      data: {
+        total_tables: tables.length,
+        success_count: successCount,
+        error_count: errorCount,
+        results: results
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Clear tables error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clear tables',
       message: error.message
     });
   }

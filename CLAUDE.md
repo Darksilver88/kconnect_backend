@@ -69,7 +69,8 @@ kconnect_backend/
 │   ├── logger.js         # Winston logger configuration
 │   ├── config.js         # Dynamic config from database
 │   ├── dateFormatter.js  # Date formatting utilities (DD/MM/YYYY HH:mm:ss)
-│   └── numberFormatter.js # Number formatting utilities (comma, currency)
+│   ├── numberFormatter.js # Number formatting utilities (comma, currency)
+│   └── keyGenerator.js   # Random alphanumeric key generator (32 chars)
 ├── logs/                 # Log files (auto-created)
 └── uploads/              # Uploaded files (auto-created)
     └── {menu}/           # Organized by menu/module
@@ -121,6 +122,7 @@ MySQL connection configured via .env file:
 - `GET /api/test-data/create_payment_type_information` - Create payment_type_information table with default data
 - `GET /api/test-data/create_bill_transaction_information` - Create bill_transaction_information table
 - `GET /api/test-data/create_bill_transaction_type_information` - Create bill_transaction_type_information table with default data
+- `GET /api/test-data/clear_tables` - Clear all data from specified tables and reset AUTO_INCREMENT to 1
 
 ### News API
 - `POST /api/news/insert` - Insert news article
@@ -136,6 +138,7 @@ MySQL connection configured via .env file:
 ### Room API
 - `POST /api/room/insert` - Insert room (requires: title, upload_key, customer_id, owner_id, status, uid)
 - `GET /api/room/list` - List rooms with pagination (requires: customer_id)
+- `POST /api/room/sync_from_firebase` - Sync room and member data from Firebase Firestore to MySQL (requires: customer_code, uid)
 
 ### Member API
 - `POST /api/member/insert` - Insert member (requires: upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, uid)
@@ -437,6 +440,21 @@ MySQL connection configured via .env file:
 - **List**: `?page=1&limit=10&status=1&keyword=search&type_id=1&customer_id=xxx&owner_id=1` via `/api/room/list`
   - Required: customer_id
   - Optional: page, limit, status, keyword, type_id, owner_id
+- **Firebase Sync**: `{customer_code, uid}` via `/api/room/sync_from_firebase`
+  - Required: customer_code (Firebase customer code), uid (user ID for create_by)
+  - Syncs room and member data from Firebase Firestore to MySQL
+  - Process flow:
+    1. Query customer from Firestore by customer_code
+    2. Query site_members filtered by user_type='MEMBER'
+    3. Batch query kconnect_users for prefix_name and email
+    4. Group members by house_no (prefix_address/house_no or prefix_address)
+    5. Insert/Update room_information (unique by title + customer_id)
+    6. Insert/Update member_information (unique by member_ref)
+    7. Update room owner_id based on user_level='owner'
+  - Field mappings:
+    - room_information: title=house_no, customer_id=customer.id, owner_id (from member with user_level='owner'), type_id=NULL, status=1
+    - member_information: house_no, prefix_name, full_name (displayName), phone_number, email, enter_date (moveInDate), user_level, user_type, user_ref (user path), member_ref (member path), customer_id
+  - Returns: success message with counts (rooms_inserted, rooms_updated, members_inserted, members_updated, owners_updated)
 
 **Member API:**
 - **Insert**: `{upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, uid}` via `/api/member/insert`
@@ -811,9 +829,14 @@ const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
 - **Auto Table Creation**: Tables created automatically on first use
 - **Clean Separation**: Business logic in controllers, routing in routes/
 - **Soft Deletes**: All deletions set `status=2` instead of removing records
-- **Upload Key Pattern**: 32-character keys used to link attachments to content
+- **Upload Key Pattern**: 32-character keys used to link attachments to content (generated via `utils/keyGenerator.js`)
 - **Dynamic Config**: Runtime configuration stored in `app_config` table via `utils/config.js`
 - **Transaction Support**: Excel/CSV import uses MySQL transactions for data consistency
+- **Database Reset**: Clear tables endpoint (`/api/test-data/clear_tables`) for development/testing
+  - Deletes all data from: room_information, payment_information, payment_attachment, member_information, bill_transaction_information, bill_room_information, bill_information, bill_audit_information, bill_attachment
+  - Resets AUTO_INCREMENT to 1 for each table
+  - Returns detailed results (success/error) for each table
+  - Use with caution - permanently deletes data (not soft delete)
 - **Auto-Generated Fields**:
   - `bill_information.bill_no` - Auto-generated bill number (format: BILL-YYYY-MMDD-NNN, per customer_id)
   - `bill_room_information.bill_no` - Auto-generated invoice number (format: INV-YYYY-MMDD-NNN, per customer_id)
@@ -944,3 +967,45 @@ logger.info(`User ${uid} deleted news ID: ${id}`);
 // Error - Always shown (critical issues)
 logger.error('Database connection failed:', error);
 ```
+
+## Firebase Integration
+
+**Configuration**: Firebase Admin SDK initialized in `config/firebase.js`
+**Environment Variables**: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+
+**Features**:
+- **Firebase Storage**: File uploads to Firebase Cloud Storage (when UPLOAD_TYPE=firebase)
+- **Firestore Database**: Data sync from Firebase Firestore to MySQL
+- **Sync Endpoint**: `/api/room/sync_from_firebase` syncs room and member data
+
+**Available Functions**:
+- `getFirebaseBucket()` - Get Firebase Storage bucket instance
+- `getFirestore()` - Get Firestore database instance
+
+**Usage Example**:
+```javascript
+import { getFirebaseBucket, getFirestore } from '../config/firebase.js';
+
+// Upload to Firebase Storage
+const bucket = getFirebaseBucket();
+const file = bucket.file('path/to/file.jpg');
+
+// Query Firestore
+const db = getFirestore();
+const snapshot = await db.collection('customer').where('code', '==', 'CUST001').get();
+```
+
+**Firestore Collections**:
+- `customer` - Customer information (contains: id, code, name, etc.)
+- `corporation/{corp_name}/site/{site_name}/site_members` - Site members with user_type filter
+- `kconnect_users` - User profile data (contains: prefixName, email, displayName, etc.)
+
+**Sync Process** (via `/api/room/sync_from_firebase`):
+1. Query customer by customer_code from Firestore
+2. Get site members filtered by user_type='MEMBER'
+3. Batch query kconnect_users for prefix_name and email
+4. Calculate house_no from prefix_address and house_no fields
+5. Group members by house_no (one room can have multiple members)
+6. Insert/Update room_information using (title + customer_id) as unique key
+7. Insert/Update member_information using member_ref as unique key
+8. Update room owner_id based on member with user_level='owner'

@@ -1,6 +1,8 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { getFirestore } from '../config/firebase.js';
+import { generateUploadKey } from '../utils/keyGenerator.js';
 
 const MENU = 'room';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -357,6 +359,277 @@ export const getSummaryData = async (req, res) => {
       success: false,
       error: 'Failed to fetch room summary data',
       message: error.message
+    });
+  }
+};
+
+/**
+ * Sync room and member data from Firebase Firestore
+ * POST /api/room/sync_from_firebase
+ * Body: { customer_id, uid }
+ */
+export const syncFromFirebase = async (req, res) => {
+  try {
+    const { customer_id, uid } = req.body;
+
+    if (!customer_id || !uid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: customer_id, uid',
+        required: ['customer_id', 'uid']
+      });
+    }
+
+    const db = getDatabase();
+    const firestore = getFirestore();
+
+    logger.info(`Starting Firebase sync for customer_id: ${customer_id}`);
+
+    // Step 1: Query customer from Firestore to get customer.name
+    const customersRef = firestore.collection('customer');
+    const customerSnapshot = await customersRef.where('customer_code', '==', customer_id).limit(1).get();
+
+    if (customerSnapshot.empty) {
+      return res.status(404).json({
+        success: false,
+        error: 'Customer not found',
+        message: 'ไม่พบข้อมูล customer ใน Firebase'
+      });
+    }
+
+    const customerDoc = customerSnapshot.docs[0];
+    const customerName = customerDoc.data().name;
+
+    logger.info(`Found customer: ${customerName}`);
+
+    // Step 2: Query site_members from Firebase
+    const siteMembersPath = `corporation/${customerName}/site/${customerName}/site_members`;
+    const siteMembersRef = firestore.collection(siteMembersPath);
+    const siteMembersSnapshot = await siteMembersRef.where('user_type', '==', 'MEMBER').get();
+
+    if (siteMembersSnapshot.empty) {
+      return res.status(404).json({
+        success: false,
+        error: 'No members found',
+        message: 'ไม่พบข้อมูลสมาชิกใน Firebase'
+      });
+    }
+
+    logger.info(`Found ${siteMembersSnapshot.size} members`);
+
+    // Step 3: Process members and group by house_no
+    const membersByHouse = {};
+    const userRefs = [];
+
+    for (const doc of siteMembersSnapshot.docs) {
+      const memberData = doc.data();
+
+      // Calculate house_no
+      let houseNo = '';
+      if (memberData.house_no && memberData.house_no.trim() !== '') {
+        houseNo = `${memberData.prefix_address}/${memberData.house_no}`;
+      } else {
+        houseNo = memberData.prefix_address || '';
+      }
+
+      if (!houseNo) {
+        logger.warn(`Skipping member ${doc.id} - no house number`);
+        continue;
+      }
+
+      // Collect userRef for batch query
+      if (memberData.userRef) {
+        userRefs.push(memberData.userRef.path);
+      }
+
+      // Group by house_no
+      if (!membersByHouse[houseNo]) {
+        membersByHouse[houseNo] = [];
+      }
+
+      membersByHouse[houseNo].push({
+        doc_id: doc.id,
+        doc_path: doc.ref.path,
+        ...memberData,
+        calculated_house_no: houseNo
+      });
+    }
+
+    // Step 4: Query all kconnect_users in batch
+    const userDataMap = {};
+    const uniqueUserPaths = [...new Set(userRefs)];
+
+    for (const userPath of uniqueUserPaths) {
+      try {
+        const userDoc = await firestore.doc(userPath).get();
+        if (userDoc.exists) {
+          userDataMap[userPath] = userDoc.data();
+        }
+      } catch (error) {
+        logger.warn(`Failed to fetch user: ${userPath}`, error);
+      }
+    }
+
+    logger.info(`Fetched ${Object.keys(userDataMap).length} user profiles`);
+
+    // Step 5: Sync data to MySQL
+    let roomsInserted = 0;
+    let roomsUpdated = 0;
+    let membersInserted = 0;
+    let membersUpdated = 0;
+
+    for (const [houseNo, members] of Object.entries(membersByHouse)) {
+      // Find owner
+      const ownerMember = members.find(m => m.user_level === 'owner') || members[0];
+
+      // Step 5.1: Insert/Update room_information
+      const checkRoomQuery = `
+        SELECT id FROM ${TABLE_INFORMATION}
+        WHERE title = ? AND customer_id = ? AND status != 2
+        LIMIT 1
+      `;
+      const [existingRoom] = await db.execute(checkRoomQuery, [houseNo, customer_id]);
+
+      let roomId;
+      if (existingRoom.length > 0) {
+        roomId = existingRoom[0].id;
+        roomsUpdated++;
+        logger.debug(`Room exists: ${houseNo} (ID: ${roomId})`);
+      } else {
+        const insertRoomQuery = `
+          INSERT INTO ${TABLE_INFORMATION} (upload_key, title, type_id, customer_id, status, create_by)
+          VALUES (?, ?, NULL, ?, 1, ?)
+        `;
+        const [roomResult] = await db.execute(insertRoomQuery, [
+          generateUploadKey(),
+          houseNo,
+          customer_id,
+          uid
+        ]);
+        roomId = roomResult.insertId;
+        roomsInserted++;
+        logger.debug(`Room inserted: ${houseNo} (ID: ${roomId})`);
+      }
+
+      // Step 5.2: Process each member
+      let ownerId = null;
+
+      for (const member of members) {
+        const userRefPath = member.userRef?.path;
+        const userData = userDataMap[userRefPath] || {};
+
+        const prefixName = userData.prefixName || '';
+        const email = userData.display_email || userData.email || '';
+
+        // Check if member exists
+        const memberRef = member.doc_path;
+        const checkMemberQuery = `
+          SELECT id FROM member_information
+          WHERE member_ref = ? AND status != 2
+          LIMIT 1
+        `;
+        const [existingMember] = await db.execute(checkMemberQuery, [memberRef]);
+
+        let memberId;
+        if (existingMember.length > 0) {
+          // Update existing member
+          memberId = existingMember[0].id;
+          const updateMemberQuery = `
+            UPDATE member_information
+            SET prefix_name = ?, full_name = ?, phone_number = ?, email = ?, house_no = ?, user_level = ?, room_id = ?
+            WHERE id = ?
+          `;
+          await db.execute(updateMemberQuery, [
+            prefixName,
+            member.fullName || '',
+            member.phone_number || '',
+            email,
+            member.calculated_house_no,
+            member.user_level || 'resident',
+            roomId,
+            memberId
+          ]);
+          membersUpdated++;
+          logger.debug(`Member updated: ${member.fullName} (ID: ${memberId})`);
+        } else {
+          // Insert new member
+          const insertMemberQuery = `
+            INSERT INTO member_information
+            (upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, create_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+          `;
+
+          const enterDate = member.create_date?._seconds
+            ? new Date(member.create_date._seconds * 1000)
+            : new Date();
+
+          const [memberResult] = await db.execute(insertMemberQuery, [
+            generateUploadKey(),
+            prefixName,
+            member.fullName || '',
+            member.phone_number || '',
+            email,
+            enterDate,
+            roomId,
+            member.calculated_house_no,
+            member.user_level || 'resident',
+            member.user_type || 'MEMBER',
+            userRefPath || '',
+            memberRef,
+            customer_id,
+            uid
+          ]);
+          memberId = memberResult.insertId;
+          membersInserted++;
+          logger.debug(`Member inserted: ${member.fullName} (ID: ${memberId})`);
+        }
+
+        // Track owner_id
+        if (member.user_level === 'owner') {
+          ownerId = memberId;
+        }
+      }
+
+      // Step 5.3: Update room with owner_id
+      if (ownerId) {
+        const updateRoomOwnerQuery = `
+          UPDATE ${TABLE_INFORMATION}
+          SET owner_id = ?, update_date = NOW(), update_by = ?
+          WHERE id = ?
+        `;
+        await db.execute(updateRoomOwnerQuery, [ownerId, uid, roomId]);
+        logger.debug(`Room owner_id updated: ${roomId} -> ${ownerId}`);
+      }
+    }
+
+    logger.info(`Sync completed: Rooms (${roomsInserted} inserted, ${roomsUpdated} updated), Members (${membersInserted} inserted, ${membersUpdated} updated)`);
+
+    res.json({
+      success: true,
+      message: 'ซิงค์ข้อมูลจาก Firebase สำเร็จ',
+      data: {
+        rooms: {
+          inserted: roomsInserted,
+          updated: roomsUpdated,
+          total: roomsInserted + roomsUpdated
+        },
+        members: {
+          inserted: membersInserted,
+          updated: membersUpdated,
+          total: membersInserted + membersUpdated
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Sync from Firebase error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to sync from Firebase',
+      message: 'เกิดข้อผิดพลาดในการซิงค์ข้อมูล',
+      details: error.message
     });
   }
 };

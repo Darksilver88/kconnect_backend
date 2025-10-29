@@ -45,4 +45,15 @@ export function getFirebaseBucket() {
   return admin.storage().bucket();
 }
 
+/**
+ * Get Firestore database instance
+ * @returns {admin.firestore.Firestore}
+ */
+export function getFirestore() {
+  if (!firebaseInitialized) {
+    initializeFirebase();
+  }
+  return admin.firestore();
+}
+
 export default initializeFirebase;

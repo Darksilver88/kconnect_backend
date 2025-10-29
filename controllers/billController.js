@@ -3,6 +3,7 @@ import logger from '../utils/logger.js';
 import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
 import { formatNumber, formatPrice } from '../utils/numberFormatter.js';
 import { getUploadType } from '../utils/storageManager.js';
+import { insertNotificationAuditForBill } from '../utils/notificationHelper.js';
 import xlsx from 'xlsx';
 import fs from 'fs';
 import https from 'https';
@@ -106,6 +107,13 @@ export const insertBill = async (req, res) => {
     // Set send_date to current date if status is 1
     const sendDate = parseInt(status) === 1 ? new Date() : null;
 
+    // Adjust expire_date time to 23:59:59
+    const expireDateObj = new Date(expire_date);
+    expireDateObj.setHours(23);
+    expireDateObj.setMinutes(59);
+    expireDateObj.setSeconds(59);
+    expireDateObj.setMilliseconds(0);
+
     const insertQuery = `
       INSERT INTO ${TABLE_INFORMATION} (upload_key, title, bill_type_id, detail, expire_date, send_date, remark, customer_id, status, create_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -118,7 +126,7 @@ export const insertBill = async (req, res) => {
       title?.trim(),
       billTypeIdValue,
       detail?.trim(),
-      expire_date,
+      expireDateObj,
       sendDate,
       remark?.trim() || null,
       customer_id?.trim(),
@@ -160,21 +168,43 @@ export const insertBill = async (req, res) => {
 
 export const updateBill = async (req, res) => {
   try {
-    const { id, title, detail, expire_date, status, remark, uid } = req.body;
+    const { id, title, bill_type_id, detail, expire_date, status, remark, uid, delete_rows } = req.body;
 
-    if (!id || !title || !detail || !expire_date || status === undefined || !uid) {
+    if (!id || !title || !bill_type_id || !detail || !expire_date || status === undefined || !uid) {
       return res.status(400).json({
         success: false,
         error: 'Missing required fields',
-        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, title, detail, expire_date, status, uid',
-        required: ['id', 'title', 'detail', 'expire_date', 'status', 'uid']
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: id, title, bill_type_id, detail, expire_date, status, uid',
+        required: ['id', 'title', 'bill_type_id', 'detail', 'expire_date', 'status', 'uid']
       });
     }
 
     const db = getDatabase();
 
+    // Parse delete_rows (optional, default = [])
+    // รองรับทั้ง JSON array และ string
+    let deleteRowsArray = [];
+
+    if (Array.isArray(delete_rows)) {
+      // กรณีส่งมาเป็น JSON array: [1, 2, 3]
+      deleteRowsArray = delete_rows.map(num => parseInt(num));
+    } else if (typeof delete_rows === 'string' && delete_rows.trim() !== '') {
+      // กรณีส่งมาเป็น string: "[1,2,3]" หรือ "1,2,3"
+      try {
+        const parsed = JSON.parse(delete_rows);
+        if (Array.isArray(parsed)) {
+          deleteRowsArray = parsed.map(num => parseInt(num));
+        }
+      } catch {
+        // ถ้า parse ไม่ได้ ลองแยกด้วย comma
+        deleteRowsArray = delete_rows.split(',')
+          .map(str => parseInt(str.trim()))
+          .filter(num => !isNaN(num));
+      }
+    }
+
     // Check current status to determine if we need to set send_date
-    const checkQuery = `SELECT status, send_date FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    const checkQuery = `SELECT status, send_date, customer_id FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
     const [currentRows] = await db.execute(checkQuery, [id]);
 
     if (currentRows.length === 0) {
@@ -187,53 +217,142 @@ export const updateBill = async (req, res) => {
 
     const currentStatus = currentRows[0].status;
     const currentSendDate = currentRows[0].send_date;
+    const billCustomerId = currentRows[0].customer_id;
 
-    // Set send_date to current date if status is changing to 1 and send_date is null
-    let sendDateUpdate = '';
-    let queryParams = [];
+    // Start transaction
+    await db.query('START TRANSACTION');
 
-    if (parseInt(status) === 1 && currentSendDate === null) {
-      sendDateUpdate = ', send_date = NOW()';
-    }
+    try {
+      // Step 1: Soft delete bill_room_information rows if delete_rows is provided
+      let deletedCount = 0;
+      if (deleteRowsArray.length > 0) {
+        // Get all bill_room_information for this bill
+        const billRoomQuery = `
+          SELECT id
+          FROM ${TABLE_ROOM}
+          WHERE bill_id = ? AND status != 2
+          ORDER BY create_date ASC
+        `;
+        const [billRoomRows] = await db.execute(billRoomQuery, [id]);
 
-    const updateQuery = `
-      UPDATE ${TABLE_INFORMATION}
-      SET title = ?, detail = ?, expire_date = ?, remark = ?, status = ?${sendDateUpdate}, update_date = NOW(), update_by = ?
-      WHERE id = ? AND status != 2
-    `;
+        // Map row_number to actual IDs
+        const idsToDelete = [];
+        deleteRowsArray.forEach(rowNum => {
+          const index = rowNum - 1; // row_number starts from 1, array index starts from 0
+          if (index >= 0 && index < billRoomRows.length) {
+            idsToDelete.push(billRoomRows[index].id);
+          }
+        });
 
-    queryParams = [
-      title?.trim(),
-      detail?.trim(),
-      expire_date,
-      remark?.trim() || null,
-      status,
-      uid,
-      id
-    ];
+        // Validate: cannot delete all bill_room_information
+        if (idsToDelete.length > 0) {
+          const remainingCount = billRoomRows.length - idsToDelete.length;
 
-    const [result] = await db.execute(updateQuery, queryParams);
+          if (remainingCount === 0) {
+            await db.query('ROLLBACK');
+            return res.status(400).json({
+              success: false,
+              error: 'Cannot delete all bill room items',
+              message: 'ไม่สามารถลบรายการทั้งหมดได้',
+              details: {
+                total_items: billRoomRows.length,
+                items_to_delete: idsToDelete.length,
+                remaining_items: remainingCount
+              }
+            });
+          }
 
-    // Insert bill audit log if status changed
-    if (currentStatus !== parseInt(status)) {
-      await insertBillAudit(db, parseInt(id), parseInt(status), uid);
-    }
+          // Soft delete selected rows
+          const placeholders = idsToDelete.map(() => '?').join(',');
+          const deleteQuery = `
+            UPDATE ${TABLE_ROOM}
+            SET status = 2, delete_date = NOW(), delete_by = ?
+            WHERE id IN (${placeholders}) AND bill_id = ?
+          `;
+          const [deleteResult] = await db.execute(deleteQuery, [uid, ...idsToDelete, id]);
+          deletedCount = deleteResult.affectedRows;
+        }
+      }
 
-    res.json({
-      success: true,
-      message: 'Bill updated successfully',
-      data: {
-        id: parseInt(id),
-        title,
-        detail,
-        expire_date,
-        remark,
+      // Step 2: Update bill_information
+      // Set send_date to current date if status is changing to 1 and send_date is null
+      let sendDateUpdate = '';
+      let queryParams = [];
+
+      if (parseInt(status) === 1 && currentSendDate === null) {
+        sendDateUpdate = ', send_date = NOW()';
+      }
+
+      // Adjust expire_date time to 23:59:59
+      const expireDateObj = new Date(expire_date);
+      expireDateObj.setHours(23);
+      expireDateObj.setMinutes(59);
+      expireDateObj.setSeconds(59);
+      expireDateObj.setMilliseconds(0);
+
+      const updateQuery = `
+        UPDATE ${TABLE_INFORMATION}
+        SET title = ?, bill_type_id = ?, detail = ?, expire_date = ?, remark = ?, status = ?${sendDateUpdate}, update_date = NOW(), update_by = ?
+        WHERE id = ? AND status != 2
+      `;
+
+      queryParams = [
+        title?.trim(),
+        parseInt(bill_type_id),
+        detail?.trim(),
+        expireDateObj,
+        remark?.trim() || null,
         status,
-        send_date_updated: parseInt(status) === 1 && currentSendDate === null,
-        update_by: uid
-      },
-      timestamp: new Date().toISOString()
-    });
+        uid,
+        id
+      ];
+
+      const [result] = await db.execute(updateQuery, queryParams);
+
+      // Step 3: Insert bill audit log if status changed
+      if (currentStatus !== parseInt(status)) {
+        await insertBillAudit(db, parseInt(id), parseInt(status), uid);
+      }
+
+      // Commit transaction
+      await db.query('COMMIT');
+
+      // Step 4: Insert notification audit if status changed from other value to 1 (sent)
+      // ถ้าเปลี่ยนจาก status อื่น มาเป็น 1 (เช่น 0 -> 1 หรือ 3 -> 1)
+      // แต่ไม่รวม 1 -> 1 (user แค่แก้ข้อมูลอื่น)
+      if (currentStatus !== 1 && parseInt(status) === 1) {
+        try {
+          await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, 'ส่งบิล');
+          logger.info(`Bill ${id} status changed to sent (${currentStatus} -> 1), notification audit created`);
+        } catch (notifError) {
+          // Log error but don't fail the update
+          logger.error('Failed to insert notification audit:', notifError);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: 'Bill updated successfully',
+        data: {
+          id: parseInt(id),
+          title,
+          bill_type_id: parseInt(bill_type_id),
+          detail,
+          expire_date,
+          remark,
+          status,
+          send_date_updated: parseInt(status) === 1 && currentSendDate === null,
+          deleted_rows_count: deletedCount,
+          update_by: uid
+        },
+        timestamp: new Date().toISOString()
+      });
+
+    } catch (error) {
+      // Rollback on error
+      await db.query('ROLLBACK');
+      throw error;
+    }
 
   } catch (error) {
     logger.error('Update bill error:', error);
@@ -260,8 +379,8 @@ export const sendBill = async (req, res) => {
 
     const db = getDatabase();
 
-    // Check if bill exists and status is 0
-    const checkQuery = `SELECT status FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    // Check if bill exists and get current status and customer_id
+    const checkQuery = `SELECT status, customer_id FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
     const [currentRows] = await db.execute(checkQuery, [id]);
 
     if (currentRows.length === 0) {
@@ -273,6 +392,7 @@ export const sendBill = async (req, res) => {
     }
 
     const currentStatus = currentRows[0].status;
+    const billCustomerId = currentRows[0].customer_id;
 
     // Update status from 0 or 3 to 1 and set send_date
     const updateQuery = `
@@ -295,6 +415,16 @@ export const sendBill = async (req, res) => {
 
     // Insert bill audit log
     await insertBillAudit(db, parseInt(id), 1, uid);
+
+    // Insert notification audit for all bill_rooms
+    // เมื่อส่งบิล (status → 1) ต้องบันทึกการแจ้งเตือน
+    try {
+      await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, 'ส่งบิล');
+      logger.info(`Bill ${id} sent, notification audit created`);
+    } catch (notifError) {
+      // Log error but don't fail the send operation
+      logger.error('Failed to insert notification audit:', notifError);
+    }
 
     logger.info(`User ${uid} sent bill ID: ${id}`);
 
@@ -466,22 +596,31 @@ export const getBillDetail = async (req, res) => {
 
     const db = getDatabase();
 
-    const query = `
+    // Query bill information with attachment
+    const billQuery = `
       SELECT b.id, b.upload_key, b.bill_no, b.title, b.bill_type_id, b.detail, b.expire_date, b.send_date, b.remark, b.customer_id, b.status,
              b.create_date, b.create_by, b.update_date, b.update_by, b.delete_date, b.delete_by,
              bt.title as bill_type_title,
-             COUNT(br.id) as total_room,
-             COALESCE(SUM(br.total_price), 0) as total_price
+             ba.id as attachment_id,
+             ba.file_name,
+             ba.file_path,
+             ba.file_ext,
+             ba.file_size
       FROM ${TABLE_INFORMATION} b
       LEFT JOIN ${TABLE_TYPE} bt ON b.bill_type_id = bt.id
-      LEFT JOIN ${TABLE_ROOM} br ON br.bill_id = b.id AND br.status != 2
+      LEFT JOIN (
+        SELECT id, upload_key, file_name, file_path, file_ext, file_size
+        FROM ${TABLE_ATTACHMENT}
+        WHERE status = 1
+        ORDER BY create_date DESC
+        LIMIT 1
+      ) ba ON b.upload_key = ba.upload_key
       WHERE b.id = ? AND b.status != 2
-      GROUP BY b.id
     `;
 
-    const [rows] = await db.execute(query, [id]);
+    const [billRows] = await db.execute(billQuery, [id]);
 
-    if (rows.length === 0) {
+    if (billRows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Bill not found',
@@ -489,17 +628,68 @@ export const getBillDetail = async (req, res) => {
       });
     }
 
-    // Add formatted dates (including expire_date and send_date)
-    const formattedData = addFormattedDates(rows[0], ['create_date', 'update_date', 'delete_date', 'expire_date', 'send_date']);
+    const billData = billRows[0];
 
-    // Format total_price with comma, smart decimal, and ฿ prefix
-    if (formattedData.total_price !== undefined && formattedData.total_price !== null) {
-      formattedData.total_price = formatPrice(parseFloat(formattedData.total_price));
-    }
+    // Query bill_room_information
+    const billRoomQuery = `
+      SELECT id, bill_id, bill_no, house_no, member_name, total_price, remark, status, create_date, create_by
+      FROM ${TABLE_ROOM}
+      WHERE bill_id = ? AND status != 2
+      ORDER BY create_date ASC
+    `;
+
+    const [billRoomRows] = await db.execute(billRoomQuery, [id]);
+
+    // Count and sum
+    const totalRoom = billRoomRows.length;
+    const totalPrice = billRoomRows.reduce((sum, row) => sum + parseFloat(row.total_price || 0), 0);
+
+    // Calculate summary counts
+    let validCount = 0;
+    let invalidCount = 0;
+
+    // Format bill_room items (แบบเดียวกับ getBillExcelList)
+    const items = billRoomRows.map((row, index) => {
+      const item = {
+        row_number: index + 1,
+        house_no: row.house_no || 'ไม่ระบุ',
+        member_name: row.member_name || 'ไม่ระบุ',
+        total_price: row.total_price ? row.total_price.toString() : 'ไม่ระบุ',
+        remark: row.remark || '-',
+        status: 1 // ถูกต้องทั้งหมด (เพราะข้อมูลอยู่ใน DB แล้ว)
+      };
+
+      // Check if valid (ถ้ามีข้อมูลครบ)
+      if (row.house_no && row.member_name && row.total_price) {
+        validCount++;
+      } else {
+        invalidCount++;
+        item.status = 0;
+        item.error_message = 'ขาดข้อมูลจำเป็น';
+      }
+
+      return item;
+    });
+
+    // Add formatted dates (including expire_date and send_date)
+    const formattedBillData = addFormattedDates(billData, ['create_date', 'update_date', 'delete_date', 'expire_date', 'send_date']);
+
+    // Add additional fields
+    formattedBillData.total_room = totalRoom;
+    formattedBillData.total_price = formatPrice(totalPrice);
+
+    // Add bill_room data (แบบเดียวกับ getBillExcelList)
+    formattedBillData.bill_room_data = {
+      total_rows: formatNumber(totalRoom),
+      valid_rows: formatNumber(validCount),
+      invalid_rows: formatNumber(invalidCount),
+      total_price: formatPrice(totalPrice),
+      items: items
+    };
 
     res.json({
       success: true,
-      data: formattedData,
+      data: formattedBillData,
       timestamp: new Date().toISOString()
     });
 
@@ -864,6 +1054,18 @@ export const insertBillWithExcel = async (req, res) => {
 
       // Step 11: Commit Transaction
       await db.query('COMMIT');
+
+      // Step 12: Insert notification audit if status = 1 (sent)
+      // ถ้าสร้างบิลพร้อมส่ง (status = 1) ให้บันทึกการแจ้งเตือน
+      if (parseInt(status) === 1) {
+        try {
+          await insertNotificationAuditForBill(db, billId, customer_id?.trim(), uid, 'สร้างและส่งบิล');
+          logger.info(`Bill ${billId} created with sent status, notification audit created for ${validatedRows.length} rooms`);
+        } catch (notifError) {
+          // Log error but don't fail the insert
+          logger.error('Failed to insert notification audit:', notifError);
+        }
+      }
 
       res.json({
         success: true,
@@ -1556,8 +1758,8 @@ export const getBillRoomPendingList = async (req, res) => {
     const currentDate = new Date();
 
     // Build WHERE clause
-    // Base condition: customer_id and not deleted
-    let whereClause = 'WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2';
+    // Base condition: customer_id, bill status = 1 (sent), and not deleted
+    let whereClause = 'WHERE b.customer_id = ? AND b.status = 1 AND br.status != 2';
     let queryParams = [customer_id];
 
     // Status filter
@@ -1941,6 +2143,115 @@ export const getBillExcelList = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch bill excel list',
+      message: error.message
+    });
+  }
+};
+
+export const sendNotificationEach = async (req, res) => {
+  try {
+    const { customer_id, table_name, id, uid, title, detail, topic, type, receiver } = req.body;
+
+    // Validate required fields
+    if (!customer_id || !table_name || !id || !uid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'กรุณากรอกข้อมูลที่จำเป็น: customer_id, table_name, id, uid',
+        required: ['customer_id', 'table_name', 'id', 'uid']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Get notification resend interval from config
+    const configQuery = `
+      SELECT config_value
+      FROM app_config
+      WHERE config_key = 'notification_resend_interval_minutes' AND is_active = TRUE
+    `;
+    const [configRows] = await db.execute(configQuery);
+    const intervalMinutes = configRows.length > 0 ? parseInt(configRows[0].config_value) : 30;
+
+    // Check last notification audit create_date
+    const lastNotificationQuery = `
+      SELECT create_date
+      FROM notification_audit_information
+      WHERE table_name = ? AND rows_id = ? AND customer_id = ?
+      ORDER BY create_date DESC
+      LIMIT 1
+    `;
+    const [lastNotificationRows] = await db.execute(lastNotificationQuery, [table_name, parseInt(id), customer_id]);
+
+    if (lastNotificationRows.length > 0) {
+      const lastCreateDate = new Date(lastNotificationRows[0].create_date);
+      const currentDate = new Date();
+      const timeDiffMs = currentDate - lastCreateDate;
+      const timeDiffMinutes = Math.floor(timeDiffMs / 1000 / 60);
+
+      // Check if enough time has passed
+      if (timeDiffMinutes < intervalMinutes) {
+        const remainingMinutes = intervalMinutes - timeDiffMinutes;
+        return res.status(400).json({
+          success: false,
+          error: 'Notification sent too recently',
+          message: `ต้องรออีก ${remainingMinutes} นาที ก่อนส่งการแจ้งเตือนอีกครั้ง`,
+          details: {
+            last_sent: lastCreateDate,
+            interval_required_minutes: intervalMinutes,
+            time_passed_minutes: timeDiffMinutes,
+            remaining_minutes: remainingMinutes
+          }
+        });
+      }
+    }
+
+    // Insert new notification audit
+    const insertQuery = `
+      INSERT INTO notification_audit_information (
+        table_name, rows_id, title, detail, topic, type, receiver, customer_id, remark, create_by
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    const [result] = await db.execute(insertQuery, [
+      table_name,
+      parseInt(id),
+      title || null,
+      detail || null,
+      topic || null,
+      type || null,
+      receiver || null,
+      customer_id,
+      'ส่งอีกครั้ง',
+      uid
+    ]);
+
+    logger.info(`Notification resent for ${table_name} ID: ${id} by user ${uid}`);
+
+    res.json({
+      success: true,
+      message: 'Notification sent successfully',
+      data: {
+        notification_id: result.insertId,
+        table_name,
+        rows_id: parseInt(id),
+        title,
+        detail,
+        topic,
+        type,
+        receiver,
+        customer_id,
+        remark: 'ส่งอีกครั้ง',
+        create_by: uid
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Send notification each error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send notification',
       message: error.message
     });
   }

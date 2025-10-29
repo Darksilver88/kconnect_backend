@@ -1,6 +1,6 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
-import { insertBill, updateBill, sendBill, cancelSendBill, deleteBill, getBillDetail, getBillList, insertBillWithExcel, getBillExcelList, getBillRoomList, getBillRoomEachList, getBillRoomPendingList, getBillStatus, getSummaryData } from '../controllers/billController.js';
+import { insertBill, updateBill, sendBill, cancelSendBill, deleteBill, getBillDetail, getBillList, insertBillWithExcel, getBillExcelList, getBillRoomList, getBillRoomEachList, getBillRoomPendingList, getBillStatus, getSummaryData, sendNotificationEach } from '../controllers/billController.js';
 
 const router = express.Router();
 
@@ -9,6 +9,7 @@ router.post('/insert', upload.none(), insertBill);
 router.post('/insert_with_excel', upload.none(), insertBillWithExcel);
 router.put('/update', upload.none(), updateBill);
 router.post('/send', upload.none(), sendBill);
+router.post('/send_notification_each', upload.none(), sendNotificationEach);
 router.post('/cancel_send', upload.none(), cancelSendBill);
 router.delete('/delete', upload.none(), deleteBill);
 router.get('/get_summary_data', getSummaryData);
