@@ -497,8 +497,8 @@ export const syncFromFirebase = async (req, res) => {
         roomsUpdated++;
         logger.debug(`Room exists: ${houseNo} (ID: ${roomId})`);
       } else {
-        // Get status from Firebase member data (use first member's status, default to 1)
-        const roomStatus = ownerMember.status !== undefined ? parseInt(ownerMember.status) : 1;
+        // Always set status = 1 (hardcoded, not from Firebase member data)
+        const roomStatus = 1;
 
         const insertRoomQuery = `
           INSERT INTO ${TABLE_INFORMATION} (upload_key, title, type_id, customer_id, status, create_by)
