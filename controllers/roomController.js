@@ -497,14 +497,18 @@ export const syncFromFirebase = async (req, res) => {
         roomsUpdated++;
         logger.debug(`Room exists: ${houseNo} (ID: ${roomId})`);
       } else {
+        // Get status from Firebase member data (use first member's status, default to 1)
+        const roomStatus = ownerMember.status !== undefined ? parseInt(ownerMember.status) : 1;
+
         const insertRoomQuery = `
           INSERT INTO ${TABLE_INFORMATION} (upload_key, title, type_id, customer_id, status, create_by)
-          VALUES (?, ?, NULL, ?, 1, ?)
+          VALUES (?, ?, NULL, ?, ?, ?)
         `;
         const [roomResult] = await db.execute(insertRoomQuery, [
           generateUploadKey(),
           houseNo,
           customer_id,
+          roomStatus,
           uid
         ]);
         roomId = roomResult.insertId;
@@ -535,9 +539,12 @@ export const syncFromFirebase = async (req, res) => {
         if (existingMember.length > 0) {
           // Update existing member
           memberId = existingMember[0].id;
+          // Get status from Firebase member data (default to 1)
+          const memberStatus = member.status !== undefined ? parseInt(member.status) : 1;
+
           const updateMemberQuery = `
             UPDATE member_information
-            SET prefix_name = ?, full_name = ?, phone_number = ?, email = ?, house_no = ?, user_level = ?, room_id = ?
+            SET prefix_name = ?, full_name = ?, phone_number = ?, email = ?, house_no = ?, user_level = ?, room_id = ?, status = ?
             WHERE id = ?
           `;
           await db.execute(updateMemberQuery, [
@@ -548,16 +555,20 @@ export const syncFromFirebase = async (req, res) => {
             member.calculated_house_no,
             member.user_level || 'resident',
             roomId,
+            memberStatus,
             memberId
           ]);
           membersUpdated++;
           logger.debug(`Member updated: ${member.fullName} (ID: ${memberId})`);
         } else {
           // Insert new member
+          // Get status from Firebase member data (default to 1)
+          const memberStatus = member.status !== undefined ? parseInt(member.status) : 1;
+
           const insertMemberQuery = `
             INSERT INTO member_information
             (upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, create_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `;
 
           const enterDate = member.create_date?._seconds
@@ -578,6 +589,7 @@ export const syncFromFirebase = async (req, res) => {
             userRefPath || '',
             memberRef,
             customer_id,
+            memberStatus,
             uid
           ]);
           memberId = memberResult.insertId;

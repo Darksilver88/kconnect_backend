@@ -1,6 +1,6 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
-import { addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
 
 const MENU = 'bill_room';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -190,6 +190,137 @@ export const getBillRoomList = async (req, res) => {
       success: false,
       error: 'Failed to fetch bill rooms',
       message: error.message
+    });
+  }
+};
+
+/**
+ * Get bill room detail by ID with transaction history
+ * GET /api/bill_room/:id
+ */
+export const getBillRoomDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ id',
+        required: ['id']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Get bill_room details with bill information
+    const billRoomQuery = `
+      SELECT
+        br.id,
+        br.bill_id,
+        br.bill_no,
+        br.house_no,
+        br.member_name,
+        br.total_price,
+        br.remark,
+        br.customer_id,
+        br.status,
+        br.create_date,
+        br.create_by,
+        br.update_date,
+        br.update_by,
+        br.delete_date,
+        br.delete_by,
+        b.title as bill_title,
+        b.detail as bill_detail,
+        b.expire_date
+      FROM ${TABLE_INFORMATION} br
+      LEFT JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.id = ? AND br.status != 2
+    `;
+
+    const [billRoomRows] = await db.execute(billRoomQuery, [parseInt(id)]);
+
+    if (billRoomRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill room not found',
+        message: 'ไม่พบรายการบิลนี้'
+      });
+    }
+
+    const billRoomData = addFormattedDates(billRoomRows[0], ['create_date', 'update_date', 'delete_date', 'expire_date']);
+
+    // Get all transactions for this bill_room
+    const transactionsQuery = `
+      SELECT
+        bt.id,
+        bt.bill_room_id,
+        bt.payment_id,
+        bt.transaction_amount,
+        bt.bill_transaction_type_id,
+        bt.transaction_type_json,
+        bt.pay_date,
+        bt.transaction_date,
+        bt.transaction_type,
+        bt.remark,
+        bt.status,
+        bt.create_date,
+        bt.create_by,
+        btt.title as transaction_type_title
+      FROM bill_transaction_information bt
+      LEFT JOIN bill_transaction_type_information btt ON bt.bill_transaction_type_id = btt.id
+      WHERE bt.bill_room_id = ? AND bt.status != 2
+      ORDER BY bt.pay_date DESC, bt.create_date DESC
+    `;
+
+    const [transactionRows] = await db.execute(transactionsQuery, [parseInt(id)]);
+
+    // Format transaction dates and parse JSON
+    const formattedTransactions = transactionRows.map(tx => {
+      const formatted = addFormattedDates(tx, ['pay_date', 'transaction_date', 'create_date']);
+
+      // Parse transaction_type_json if exists
+      if (formatted.transaction_type_json) {
+        try {
+          formatted.transaction_type_json_parsed = JSON.parse(formatted.transaction_type_json);
+        } catch (error) {
+          logger.warn(`Failed to parse transaction_type_json for transaction ${tx.id}`);
+          formatted.transaction_type_json_parsed = null;
+        }
+      }
+
+      return formatted;
+    });
+
+    // Calculate totals
+    const totalPaid = transactionRows.reduce((sum, tx) => sum + parseFloat(tx.transaction_amount), 0);
+    const totalPrice = parseFloat(billRoomData.total_price);
+    const remainingAmount = totalPrice - totalPaid;
+
+    res.json({
+      success: true,
+      data: {
+        ...billRoomData,
+        transactions: formattedTransactions,
+        summary: {
+          total_price: totalPrice,
+          total_paid: totalPaid,
+          remaining_amount: remainingAmount,
+          transaction_count: transactionRows.length,
+          is_fully_paid: remainingAmount <= 0
+        }
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill room detail error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill room detail',
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลรายละเอียดบิล',
+      details: error.message
     });
   }
 };

@@ -1,5 +1,5 @@
 import express from 'express';
-import { insertTestData, getTestDataList, createNewsAttachment, createBillAttachment, createAppConfig, createRoomInformation, createMemberInformation, createBillInformation, createBillRoomInformation, createBillTypeInformation, createBillAudit, createPaymentInformation, createPaymentAttachment, createPaymentTypeInformation, createBillTransactionInformation, createBillTransactionTypeInformation, createNotificationAudit, clearTables } from '../controllers/testDataController.js';
+import { insertTestData, getTestDataList, createNewsAttachment, createBillAttachment, createAppConfig, createRoomInformation, createMemberInformation, createBillInformation, createBillRoomInformation, createBillTypeInformation, createBillAudit, createPaymentInformation, createPaymentAttachment, createPaymentTypeInformation, createBillTransactionInformation, createBillTransactionTypeInformation, createNotificationAudit, createBankInformation, createBankAttachment, createAppCustomerConfig, clearTables } from '../controllers/testDataController.js';
 
 const router = express.Router();
 
@@ -21,6 +21,9 @@ router.get('/create_payment_type_information', createPaymentTypeInformation);
 router.get('/create_bill_transaction_information', createBillTransactionInformation);
 router.get('/create_bill_transaction_type_information', createBillTransactionTypeInformation);
 router.get('/create_notification_audit', createNotificationAudit);
+router.get('/create_bank_information', createBankInformation);
+router.get('/create_bank_attachment', createBankAttachment);
+router.get('/create_app_customer_config', createAppCustomerConfig);
 router.get('/clear_tables', clearTables);
 
 export default router;

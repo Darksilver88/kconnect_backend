@@ -28,7 +28,7 @@ function decodeFilename(filename) {
 
 export const uploadFiles = async (req, res) => {
   try {
-    const { upload_key, menu } = req.body;
+    const { upload_key, menu, status } = req.body;
     const files = req.files;
 
     if (!upload_key || !menu) {
@@ -39,6 +39,9 @@ export const uploadFiles = async (req, res) => {
         required: ['upload_key', 'menu']
       });
     }
+
+    // Use provided status or default to 1
+    const fileStatus = status !== undefined ? parseInt(status) : 1;
 
     if (!files || files.length === 0) {
       return res.status(400).json({
@@ -159,12 +162,13 @@ export const uploadFiles = async (req, res) => {
         file_size: uploadResult.size,
         file_ext: uploadResult.ext,
         file_path: uploadResult.path, // Storage path (URL or local path)
+        status: fileStatus, // Use provided status or default 1
         create_by: 1 // Default user, should be from auth
       };
 
       const insertAttachmentQuery = `
-        INSERT INTO ${tableName} (upload_key, file_name, file_size, file_ext, file_path, create_by)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO ${tableName} (upload_key, file_name, file_size, file_ext, file_path, status, create_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `;
 
       const [result] = await db.execute(insertAttachmentQuery, [
@@ -173,6 +177,7 @@ export const uploadFiles = async (req, res) => {
         fileInfo.file_size,
         fileInfo.file_ext,
         fileInfo.file_path,
+        fileInfo.status,
         fileInfo.create_by
       ]);
 

@@ -188,6 +188,98 @@ export const insertBillTransaction = async (req, res) => {
 };
 
 /**
+ * Get bill transaction detail by ID
+ * GET /api/bill_transaction/:id
+ */
+export const getBillTransactionDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameter',
+        message: 'กรุณาระบุ id',
+        required: ['id']
+      });
+    }
+
+    const db = getDatabase();
+
+    const query = `
+      SELECT
+        bt.id,
+        bt.bill_room_id,
+        bt.payment_id,
+        bt.transaction_amount,
+        bt.bill_transaction_type_id,
+        bt.transaction_type_json,
+        bt.pay_date,
+        bt.transaction_date,
+        bt.transaction_type,
+        bt.remark,
+        bt.customer_id,
+        bt.status,
+        bt.create_date,
+        bt.create_by,
+        bt.update_date,
+        bt.update_by,
+        bt.delete_date,
+        bt.delete_by,
+        btt.title as transaction_type_title,
+        br.bill_no,
+        br.member_name,
+        br.house_no,
+        br.total_price,
+        br.bill_id,
+        b.title as bill_title
+      FROM bill_transaction_information bt
+      LEFT JOIN bill_transaction_type_information btt ON bt.bill_transaction_type_id = btt.id
+      LEFT JOIN bill_room_information br ON bt.bill_room_id = br.id
+      LEFT JOIN bill_information b ON br.bill_id = b.id
+      WHERE bt.id = ? AND bt.status != 2
+    `;
+
+    const [rows] = await db.execute(query, [parseInt(id)]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill transaction not found',
+        message: 'ไม่พบรายการชำระเงินนี้'
+      });
+    }
+
+    const formattedData = addFormattedDates(rows[0], ['create_date', 'update_date', 'delete_date', 'pay_date', 'transaction_date']);
+
+    // Parse transaction_type_json if exists
+    if (formattedData.transaction_type_json) {
+      try {
+        formattedData.transaction_type_json_parsed = JSON.parse(formattedData.transaction_type_json);
+      } catch (error) {
+        logger.warn(`Failed to parse transaction_type_json for transaction ${id}`);
+        formattedData.transaction_type_json_parsed = null;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: formattedData,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill transaction detail error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill transaction detail',
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลรายละเอียดการชำระเงิน',
+      details: error.message
+    });
+  }
+};
+
+/**
  * Get bill transaction type list
  * GET /api/bill_transaction/bill_transaction_type
  */
@@ -198,7 +290,7 @@ export const getBillTransactionType = async (req, res) => {
     const query = `
       SELECT id, title, status
       FROM ${TABLE_TRANSACTION_TYPE}
-      WHERE status != 2
+      WHERE status = 1
       ORDER BY id ASC
     `;
 

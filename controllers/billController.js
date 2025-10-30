@@ -1597,12 +1597,12 @@ export const getSummaryData = async (req, res) => {
     const [sentBillThisMonthResult] = await db.execute(sentBillThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
     const sentBillsThisMonth = sentBillThisMonthResult[0].total;
 
-    // Card 3: รอการชำระ (Pending payment - bill_room_information.status = 0)
+    // Card 3: รอการชำระ (Pending payment - bill_room_information.status = 0 และ bill_information.status = 1 เท่านั้น)
     const pendingPaymentQuery = `
       SELECT COUNT(*) as total
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND b.status != 2 AND br.status = 0
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
     `;
     const [pendingPaymentResult] = await db.execute(pendingPaymentQuery, [customer_id]);
     const totalPendingPayment = pendingPaymentResult[0].total;
@@ -1612,7 +1612,7 @@ export const getSummaryData = async (req, res) => {
       SELECT COUNT(*) as total
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND b.status != 2 AND br.status = 0
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
         AND br.create_date >= ? AND br.create_date <= ?
     `;
     const [pendingPaymentThisMonthResult] = await db.execute(pendingPaymentThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
@@ -1639,12 +1639,12 @@ export const getSummaryData = async (req, res) => {
     const [paidThisMonthResult] = await db.execute(paidThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
     const paidThisMonth = paidThisMonthResult[0].total;
 
-    // Card 5: ห้องทั้งหมด (Total unique rooms)
+    // Card 5: ห้องทั้งหมด (Total unique rooms - เฉพาะ bill_information.status = 1 ส่งแล้ว)
     const totalRoomsQuery = `
       SELECT COUNT(DISTINCT br.house_no) as total
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status != 2
     `;
     const [totalRoomsResult] = await db.execute(totalRoomsQuery, [customer_id]);
     const totalRooms = totalRoomsResult[0].total;
@@ -1654,7 +1654,7 @@ export const getSummaryData = async (req, res) => {
       SELECT COUNT(DISTINCT br.house_no) as total
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND b.status != 2 AND br.status != 2
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status != 2
         AND br.create_date >= ? AND br.create_date <= ?
     `;
     const [newRoomsThisMonthResult] = await db.execute(newRoomsThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
@@ -1763,16 +1763,13 @@ export const getBillRoomPendingList = async (req, res) => {
     let queryParams = [customer_id];
 
     // Status filter
-    // status = -1 or undefined: show status 0, 3, 4 (pending, overdue, partial payment)
+    // status = -1 or undefined: show all statuses except deleted (status 2)
     // status = specific value: filter by that status
     const statusValue = status !== undefined && status !== '' ? parseInt(status) : -1;
 
     if (statusValue === -1) {
-      // Show only pending statuses: 0, 3, 4 (pending, overdue, partial payment)
-      // Status 3 is calculated (status=0 + overdue)
-      // Status 4 can be in DB or calculated (has partial payment)
-      // So we need to include both status=0 and status=4 from DB
-      whereClause += ' AND (br.status = 0 OR br.status = 4)';
+      // Show all statuses except deleted (already filtered by br.status != 2 in base WHERE clause)
+      // No additional status filter needed
     } else {
       // Filter by specific status
       // Status 0 = รอชำระ (ยังไม่เลยกำหนด, ไม่มียอดชำระ)
@@ -1889,13 +1886,9 @@ export const getBillRoomPendingList = async (req, res) => {
         formattedRows = formattedRows.filter(row => row.status === 3);
       } else if (statusValue === 4) {
         // Show only partial payment bills (status = 4)
-        // This will be implemented when partial payment feature is added
         formattedRows = formattedRows.filter(row => row.status === 4);
       }
     }
-
-    // Update total count to match filtered results
-    const filteredTotal = formattedRows.length;
 
     res.json({
       success: true,
@@ -1903,9 +1896,9 @@ export const getBillRoomPendingList = async (req, res) => {
       pagination: {
         current_page: pageNum,
         per_page: limitNum,
-        total: filteredTotal,
-        total_pages: Math.ceil(filteredTotal / limitNum),
-        has_next: pageNum * limitNum < filteredTotal,
+        total: total,
+        total_pages: Math.ceil(total / limitNum),
+        has_next: pageNum * limitNum < total,
         has_prev: pageNum > 1
       },
       timestamp: new Date().toISOString()
@@ -1926,8 +1919,9 @@ export const getBillStatus = async (req, res) => {
     const statusList = [
       { id: -1, title: 'ทุกสถานะ' },
       { id: 0, title: 'รอชำระ' },
+      { id: 5, title: 'รอตรวจสอบ' },
       { id: 3, title: 'เกินกำหนด' },
-      { id: 4, title: 'ชำระบางส่วน' }
+      { id: 1, title: 'ชำระแล้ว' }
     ];
 
     res.json({

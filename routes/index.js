@@ -12,6 +12,8 @@ import billTransactionRoutes from './billTransaction.js';
 import paymentRoutes from './payment.js';
 import paymentTypeRoutes from './paymentType.js';
 import dashboardRoutes from './dashboard.js';
+import bankRoutes from './bank.js';
+import appCustomerConfigRoutes from './appCustomerConfig.js';
 
 const router = express.Router();
 
@@ -37,5 +39,7 @@ router.use('/bill_transaction', billTransactionRoutes);
 router.use('/payment', paymentRoutes);
 router.use('/payment_type', paymentTypeRoutes);
 router.use('/dashboard', dashboardRoutes);
+router.use('/bank', bankRoutes);
+router.use('/app_customer_config', appCustomerConfigRoutes);
 
 export default router;

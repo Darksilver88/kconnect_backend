@@ -1018,7 +1018,8 @@ export const createBillTransactionTypeInformation = async (req, res) => {
       { id: 2, title: 'โอนเงินธนาคาร' },
       { id: 3, title: 'เช็ค' },
       { id: 4, title: 'บัตรเครดิต' },
-      { id: 5, title: 'อื่นๆ' }
+      { id: 5, title: 'อื่นๆ' },
+      { id: 6, title: 'โอนเงินพร้อมแนบสลิป' }
     ];
 
     const uploadKey = Math.random().toString(36).substring(2, 34);
@@ -1156,6 +1157,173 @@ export const createNotificationAudit = async (req, res) => {
   }
 };
 
+export const createBankInformation = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS bank_information (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        bank_account VARCHAR(50) NULL,
+        bank_id INT NULL,
+        bank_no VARCHAR(50) NULL,
+        type VARCHAR(255) NULL,
+        status INT NOT NULL DEFAULT 1,
+        customer_id VARCHAR(255) NOT NULL,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+
+    await db.execute(createTableQuery);
+    logger.info('Table bank_information checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bank information table created successfully',
+      data: {
+        table_name: 'bank_information',
+        table_created: true,
+        fields: [
+          'id',
+          'upload_key',
+          'bank_account',
+          'bank_id',
+          'bank_no',
+          'type',
+          'status',
+          'customer_id',
+          'create_date',
+          'create_by',
+          'update_date',
+          'update_by',
+          'delete_date',
+          'delete_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bank information table error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bank information table',
+      message: error.message
+    });
+  }
+};
+
+export const createBankAttachment = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createAttachmentTableQuery = `
+      CREATE TABLE IF NOT EXISTS bank_attachment (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        upload_key CHAR(32) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_size INT NOT NULL,
+        file_ext VARCHAR(10) NOT NULL,
+        file_path VARCHAR(500) NOT NULL,
+        status INT NOT NULL DEFAULT 1,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        create_by INT NOT NULL,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL,
+        delete_date TIMESTAMP NULL,
+        delete_by INT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+
+    await db.execute(createAttachmentTableQuery);
+    logger.info('Table bank_attachment checked/created');
+
+    res.json({
+      success: true,
+      message: 'Bank attachment table created successfully',
+      data: {
+        table_name: 'bank_attachment',
+        table_created: true
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create bank attachment error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create bank attachment table',
+      message: error.message
+    });
+  }
+};
+
+export const createAppCustomerConfig = async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const createConfigTableQuery = `
+      CREATE TABLE IF NOT EXISTS app_customer_config (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        config_key VARCHAR(100) NOT NULL UNIQUE,
+        config_value TEXT NOT NULL,
+        data_type ENUM('string', 'number', 'boolean', 'json') DEFAULT 'string',
+        title VARCHAR(255),
+        description VARCHAR(255),
+        icon TEXT,
+        background_color VARCHAR(50),
+        customer_id VARCHAR(255) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        update_date TIMESTAMP NULL,
+        update_by INT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `;
+
+    await db.execute(createConfigTableQuery);
+    logger.info('Table app_customer_config checked/created');
+
+    res.json({
+      success: true,
+      message: 'App customer config table created successfully',
+      data: {
+        table_name: 'app_customer_config',
+        table_created: true,
+        fields: [
+          'id',
+          'config_key',
+          'config_value',
+          'data_type',
+          'title',
+          'description',
+          'icon',
+          'background_color',
+          'customer_id',
+          'is_active',
+          'create_date',
+          'update_date',
+          'update_by'
+        ]
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Create app customer config error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create app customer config table',
+      message: error.message
+    });
+  }
+};
+
 /**
  * Clear all data from specified tables and reset AUTO_INCREMENT to 1
  * GET /api/test-data/clear_tables
@@ -1174,7 +1342,9 @@ export const clearTables = async (req, res) => {
       'bill_information',
       'bill_audit_information',
       'bill_attachment',
-      'notification_audit_information'
+      'notification_audit_information',
+      'bank_information',
+      'bank_attachment'
     ];
 
     const results = [];

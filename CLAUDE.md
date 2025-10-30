@@ -48,8 +48,10 @@ kconnect_backend/
 │   ├── bill.js           # Bill routes
 │   ├── billType.js       # Bill Type routes
 │   ├── billRoom.js       # Bill Room routes
+│   ├── billTransaction.js # Bill Transaction routes
 │   ├── payment.js        # Payment routes
-│   └── paymentType.js    # Payment Type routes
+│   ├── paymentType.js    # Payment Type routes
+│   └── dashboard.js      # Dashboard routes
 ├── controllers/
 │   ├── testDataController.js  # Test data & table creation
 │   ├── newsController.js      # News business logic
@@ -59,8 +61,10 @@ kconnect_backend/
 │   ├── billController.js      # Bill business logic
 │   ├── billTypeController.js  # Bill Type business logic
 │   ├── billRoomController.js  # Bill Room business logic
+│   ├── billTransactionController.js # Bill Transaction business logic
 │   ├── paymentController.js   # Payment business logic
-│   └── paymentTypeController.js # Payment Type business logic
+│   ├── paymentTypeController.js # Payment Type business logic
+│   └── dashboardController.js # Dashboard business logic
 ├── middleware/
 │   ├── errorHandler.js   # Error handling middleware
 │   └── logger.js         # Request logging middleware
@@ -156,6 +160,7 @@ MySQL connection configured via .env file:
 - `GET /api/bill/{id}` - Get single bill by ID with bill_type details
 - `GET /api/bill/bill_room_list` - List bill rooms with bill information (requires: customer_id, bill_id)
 - `GET /api/bill/bill_room_each_list` - List bills for specific room with summary data (requires: house_no, customer_id)
+- `GET /api/bill/get_summary_data` - Get bill summary data (7 summary cards for bill overview) (requires: customer_id)
 
 ### Bill Type API
 - `GET /api/bill-type/list` - List bill types with pagination
@@ -169,6 +174,7 @@ MySQL connection configured via .env file:
 - `PUT /api/payment/update` - Update payment (requires: ids, uid, status)
 - `GET /api/payment/list` - List payments with pagination (requires: customer_id)
 - `GET /api/payment/summary_status` - Get payment count summary by status (requires: customer_id)
+- `GET /api/payment/get_summary_data` - Get payment summary data (8 summary cards for payment overview) (requires: customer_id)
 - `GET /api/payment/{id}` - Get single payment detail by ID
 
 ### Payment Type API
@@ -176,7 +182,15 @@ MySQL connection configured via .env file:
 
 ### Bill Transaction API
 - `POST /api/bill_transaction/insert` - Insert bill transaction (manual payment entry by admin)
+- `GET /api/bill_transaction/:id` - Get bill transaction detail by ID
 - `GET /api/bill_transaction/bill_transaction_type` - Get bill transaction type list
+
+### Dashboard API
+- `GET /api/dashboard/summary` - Get dashboard summary data (10 cards with statistics)
+- `GET /api/dashboard/billing_revenue` - Get billing revenue chart data (billed vs revenue by month)
+- `GET /api/dashboard/bill_status` - Get bill status and upcoming bills (pie chart + 7-day forecast)
+- `GET /api/dashboard/payment_efficiency` - Get payment efficiency statistics (payment rate with target)
+- `GET /api/dashboard/action_items` - Get action items list (tasks requiring attention)
 
 ### File Upload API
 - `POST /api/upload_file` - Upload files to specific module (menu + upload_key)
@@ -317,7 +331,7 @@ MySQL connection configured via .env file:
 - `total_price` - DECIMAL(10,2) NOT NULL
 - `remark` - TEXT NULL
 - `customer_id` - VARCHAR(255) NOT NULL
-- `status` - INT NOT NULL DEFAULT 1
+- `status` - INT NOT NULL DEFAULT 0 (0=รอชำระ, 1=ชำระแล้ว, 2=Deleted, 4=ชำระบางส่วน, 5=รอตรวจสอบ)
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
 - `update_date` - TIMESTAMP NULL
@@ -530,6 +544,18 @@ MySQL connection configured via .env file:
   - Order by: expire_date DESC (newest expire_date first)
   - Filter: Only shows bills where bill_information.status = 1 (sent bills only)
   - Dynamic status: If status=0 and current_date > expire_date, returns status=3 (overdue)
+- **Get Summary Data**: `?customer_id=xxx` via `/api/bill/get_summary_data`
+  - Required: customer_id
+  - Returns 7 summary cards for bill overview:
+    - Card 1: total_bills (count of bill_information with status=1)
+    - Card 2: paid_bills (count of bill_room with status=1)
+    - Card 3: pending_payment (count of bill_room with status=0, only sent bills)
+    - Card 4: total_revenue (sum of total_price from bill_room with status=1, formatted with ฿)
+    - Card 5: total_rooms (count of distinct house_no, only sent bills)
+    - Card 6: overdue_bills (count of bill_room with status=0 AND expire_date < CURDATE(), only sent bills)
+    - Card 7: partial_payment (count of bill_room with status=4)
+  - All counts filter for bill_information.status = 1 (sent bills only)
+  - Revenue formatted with ฿ prefix and comma separator
 
 **Bill Type API:**
 - **List**: `?page=1&limit=100&status=1&keyword=search` via `/api/bill-type/list`
@@ -553,6 +579,7 @@ MySQL connection configured via .env file:
   - payment_amount is DOUBLE type
   - Uses Polymorphic Association: payable_type + payable_id (e.g., payable_type='bill_room_information', payable_id=19)
   - Validation: Checks if payment_attachment exists with status=1 before insert (requires payment slip)
+  - **After Insert**: If payable_type='bill_room_information', updates bill_room_information status to 5 (รอตรวจสอบ)
 - **Update**: `{ids, uid, status, remark?}` via `/api/payment/update`
   - Required: ids (array of integers), uid, status
   - Optional: remark (required if status=3)
@@ -576,6 +603,19 @@ MySQL connection configured via .env file:
   - Item-level failures (continues processing, returns in failed_items):
     - Payment not found
     - Payment status is not 0 (already processed)
+  - **Payment Workflow**:
+    - When status=3 (Reject): Updates bill_room_information status back to 0 (รอชำระ)
+    - When status=1 (Approve): Creates bill_transaction_information record with:
+      - bill_room_id from payment_information.payable_id
+      - payment_id = payment ID
+      - transaction_amount from payment_information.payment_amount
+      - bill_transaction_type_id = 6 (โอนเงินพร้อมแนบสลิป, hardcoded)
+      - pay_date = NOW()
+      - remark from payment_information.remark
+      - customer_id from payment_information.customer_id
+      - create_by from uid (request parameter)
+      - Automatically determines transaction_type (full/partial)
+      - Updates bill_room_information status (1=ชำระแล้ว or 4=ชำระบางส่วน)
 - **List**: `?page=1&limit=10&status=1&keyword=search&customer_id=xxx&amount_range=1&date_range=1` via `/api/payment/list`
   - Required: customer_id
   - Optional: page, limit, status, keyword, amount_range, date_range
@@ -607,6 +647,19 @@ MySQL connection configured via .env file:
     - tab4: Rejected count (status=3)
   - Excludes deleted records (status=2)
   - Returns 0 if no records found for tab2/tab3/tab4
+- **Get Summary Data**: `?customer_id=xxx` via `/api/payment/get_summary_data`
+  - Required: customer_id
+  - Returns 8 summary cards for payment overview:
+    - Card 1: total_bill_rooms (count of bill_room, only sent bills)
+    - Card 2: total_payments (count of payment_information, all statuses except deleted)
+    - Card 3: pending_payments (count of payments with status=0)
+    - Card 4: approved_payments (count of payments with status=1)
+    - Card 5: unpaid_bill_rooms (count of bill_room with status=0, only sent bills)
+    - Card 6: partial_payments (count of bill_room with status=4)
+    - Card 7: rejected_payments (count of payments with status=3)
+    - Card 8: total_payment_amount (sum of payment_amount from approved payments, formatted with ฿)
+  - All bill_room counts filter for bill_information.status = 1 (sent bills only)
+  - Payment amount formatted with ฿ prefix and comma separator
 - **Detail**: `/api/payment/{id}` - Get single payment by ID
   - Returns complete payment information with joined data:
     - Payment information: id, upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark
@@ -653,9 +706,73 @@ MySQL connection configured via .env file:
       "reference_no": "TRF202510240001"
     }
     ```
+- **Detail**: `/api/bill_transaction/{id}` - Get bill transaction detail by ID
+  - Returns complete transaction information with joined data:
+    - Transaction information: id, bill_room_id, payment_id, transaction_amount, bill_transaction_type_id, transaction_type_json, pay_date, transaction_date, transaction_type, remark, customer_id, status
+    - Bill transaction type: transaction_type_title
+    - Bill room information: bill_no, member_name, house_no, total_price, bill_id
+    - Bill information: bill_title
+  - All date fields formatted with _formatted suffix (DD/MM/YYYY HH:mm:ss)
+  - transaction_type_json parsed to transaction_type_json_parsed if valid JSON
+  - Returns 404 if transaction not found or deleted (status=2)
 - **Bill Transaction Type List**: No parameters via `/api/bill_transaction/bill_transaction_type`
   - Returns all active transaction types (status != 2)
-  - Default data: 1=เงินสด, 2=โอนเงินธนาคาร, 3=เช็ค, 4=บัตรเครดิต, 5=อื่นๆ
+  - Default data: 1=เงินสด, 2=โอนเงินธนาคาร, 3=เช็ค, 4=บัตรเครดิต, 5=อื่นๆ, 6=โอนเงินพร้อมแนบสลิป (from payment approval)
+
+**Dashboard API:**
+- **Summary**: `?customer_id=xxx` via `/api/dashboard/summary`
+  - Required: customer_id
+  - Returns 10 summary cards with statistics:
+    - total_rooms: Total rooms count
+    - active_members: Active members count with monthly trend
+    - new_members: New members this month
+    - pending_members: Pending approval members
+    - unpaid_rooms: Rooms with unpaid bills with overdue count
+    - revenue_this_month: Revenue with monthly comparison (formatted with ฿)
+    - unpaid_amount: Total unpaid amount (formatted with ฿)
+    - paid_count: Paid bills count with monthly trend
+    - pending_payment: Pending payment verification count (bill_room status=5)
+    - total_bills: Total bills in system with monthly trend
+  - All counts include trend indicators (up/down) and change descriptions
+  - Only counts sent bills (bill_information.status = 1)
+  - Pending payment: Counts bill_room_information with status=5 (รอตรวจสอบ)
+- **Billing Revenue**: `?customer_id=xxx&month_duration=6` via `/api/dashboard/billing_revenue`
+  - Required: customer_id
+  - Optional: month_duration (3, 6, or 12 months, default: 6)
+  - Returns chart data comparing billed amount vs actual revenue by month
+  - Chart data includes: month (Thai short name), month_number, year, billed (total bill amount), revenue (total transaction amount)
+  - Both values formatted with ฿ prefix
+  - Only includes sent bills (bill_information.status = 1)
+- **Bill Status**: `?customer_id=xxx` via `/api/dashboard/bill_status`
+  - Required: customer_id
+  - Returns bill status summary and upcoming bills forecast:
+    - bill_status: total_bills, paid (count + percent), pending (count + percent), overdue (count + percent)
+    - upcoming_bills: Array of 4 items (tomorrow, 2 days, 3 days, 4-7 days) with count and total_amount
+  - Pending bills: status IN (0, 5) AND expire_date >= CURDATE()
+  - Overdue bills: status IN (0, 5) AND expire_date < CURDATE()
+  - Upcoming bills: status IN (0, 5) with specific date ranges
+  - All amounts formatted with ฿ prefix
+  - Only includes sent bills (bill_information.status = 1)
+- **Payment Efficiency**: `?customer_id=xxx` via `/api/dashboard/payment_efficiency`
+  - Required: customer_id
+  - Returns payment efficiency statistics:
+    - payment_rate: Current month payment completion rate (%)
+    - payment_rate_last_month: Previous month rate for comparison
+    - rate_change: Difference between current and last month (+ or -)
+    - trend: "up" or "down"
+    - target_rate: Fixed at 90%
+    - needed_payments: Number of payments needed to reach target
+    - stats: total_bills, paid_bills, unpaid_bills (current month only)
+  - Based on bill send_date (YEAR/MONTH comparison)
+  - Only includes sent bills (bill_information.status = 1)
+- **Action Items**: `?customer_id=xxx` via `/api/dashboard/action_items`
+  - Required: customer_id
+  - Returns prioritized list of tasks requiring attention:
+    - Item 1: Pending payment verification (bill_room status=5, priority=1, red theme)
+    - Item 2: Unpaid bills with overdue count (status IN (0,4), priority=2, yellow theme)
+  - Each item includes: id, title, description, count, background_color, border_color, icon_html, icon_class, icon_color, router, priority
+  - Only includes items with count > 0
+  - Only counts sent bills (bill_information.status = 1)
 
 **File Upload API:**
 - **Upload**: `{upload_key, menu}` + files via form-data to `/api/upload_file`
@@ -859,6 +976,22 @@ const priceDecimal = formatPrice(1200.06);  // "฿1,200.06"
   - Status validation: Update API only accepts status values 1 or 3 (cannot update to 0, 2, or other values)
   - Rejection requirement: When setting status=3, remark field is required to provide reason for rejection
   - Approved/Rejected payments: Cannot be updated again, member must submit new payment notification if rejected
+- **Bill Room Status Workflow** (bill_room_information.status):
+  - Status meanings: 0=รอชำระ (unpaid), 1=ชำระแล้ว (paid), 2=Deleted (soft delete), 4=ชำระบางส่วน (partial payment), 5=รอตรวจสอบ (pending verification)
+  - **Automatic Status Transitions**:
+    - Payment insert → status = 5 (รอตรวจสอบ) when payable_type='bill_room_information'
+    - Payment reject (status=3) → status = 0 (รอชำระ) restore to unpaid
+    - Payment approve (status=1) → Creates transaction → status = 1 (ชำระแล้ว) or 4 (ชำระบางส่วน) based on total paid
+    - Manual transaction insert → status = 1 (ชำระแล้ว) or 4 (ชำระบางส่วน) based on total paid
+  - **Payment Calculation Logic**:
+    - Sum all transaction_amount from bill_transaction_information where bill_room_id matches
+    - If newTotalPaid >= totalPrice → status=1 (ชำระแล้ว), transaction_type='full'
+    - If newTotalPaid < totalPrice → status=4 (ชำระบางส่วน), transaction_type='partial'
+  - **Dashboard & Reports Filtering**:
+    - Pending bills: status IN (0, 5) - includes both unpaid and pending verification
+    - Overdue bills: status IN (0, 5) AND expire_date < CURDATE()
+    - Upcoming bills: status IN (0, 5) with date range filters
+    - Only counts bills where bill_information.status = 1 (sent bills)
 - **Excel/CSV Import**: Bill system supports importing bill_room data from Excel/CSV files with validation and preview
   - **Preview Flow** (GET /api/bill/bill_excel_list):
     - Step 1: Upload Excel/CSV via `/api/upload_file` (menu=bill) → get upload_key

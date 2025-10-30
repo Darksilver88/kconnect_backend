@@ -61,6 +61,22 @@ export const insertPayment = async (req, res) => {
       uid
     ]);
 
+    // If payable_type is bill_room_information, update bill_room status to 5 (รอตรวจสอบ)
+    if (payable_type?.trim() === 'bill_room_information') {
+      try {
+        const updateBillRoomStatusQuery = `
+          UPDATE bill_room_information
+          SET status = 5, update_date = NOW(), update_by = ?
+          WHERE id = ? AND status != 2
+        `;
+        await db.execute(updateBillRoomStatusQuery, [uid, payableIdValue]);
+        logger.info(`Updated bill_room_information id=${payableIdValue} status to 5 (รอตรวจสอบ) after payment insert`);
+      } catch (updateError) {
+        logger.error(`Failed to update bill_room_information status for id=${payableIdValue}:`, updateError);
+        // Don't fail the whole operation, just log the error
+      }
+    }
+
     res.json({
       success: true,
       message: 'Payment inserted successfully',
@@ -183,6 +199,22 @@ export const updatePayment = async (req, res) => {
         ]);
 
         if (result.affectedRows > 0) {
+          // ถ้าปฏิเสธ (status = 3) และเป็น bill_room_information ให้เปลี่ยน bill_room status กลับเป็น 0
+          if (statusValue === 3 && paymentData.payable_type === 'bill_room_information') {
+            try {
+              const updateBillRoomStatusQuery = `
+                UPDATE bill_room_information
+                SET status = 0, update_date = NOW(), update_by = ?
+                WHERE id = ? AND status != 2
+              `;
+              await db.execute(updateBillRoomStatusQuery, [uid, paymentData.payable_id]);
+              logger.info(`Rejected payment id=${id}: Updated bill_room_information id=${paymentData.payable_id} status back to 0 (รอชำระ)`);
+            } catch (billRoomError) {
+              logger.error(`Failed to update bill_room_information status for id=${paymentData.payable_id}:`, billRoomError);
+              // ไม่ต้อง fail ทั้งหมด เพียงแค่ log error
+            }
+          }
+
           // ถ้าอนุมัติ (status = 1) และเป็น bill_room_information
           if (statusValue === 1 && paymentData.payable_type === 'bill_room_information') {
             try {
@@ -218,11 +250,11 @@ export const updatePayment = async (req, res) => {
                 }
 
                 // 5. Insert transaction record
-                // bill_transaction_type_id = NULL for system approved payments (payment_id is set)
+                // bill_transaction_type_id = 6 (โอนเงินพร้อมแนบสลิป) for payment approved via payment_information
                 const insertTransactionQuery = `
                   INSERT INTO bill_transaction_information
                   (bill_room_id, payment_id, transaction_amount, bill_transaction_type_id, transaction_type_json, pay_date, transaction_type, remark, customer_id, status, create_by)
-                  VALUES (?, ?, ?, NULL, NULL, NOW(), ?, ?, ?, 1, ?)
+                  VALUES (?, ?, ?, 6, NULL, NOW(), ?, ?, ?, 1, ?)
                 `;
                 await db.execute(insertTransactionQuery, [
                   paymentData.payable_id,
@@ -694,12 +726,12 @@ export const getPaymentSummaryData = async (req, res) => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-    // Card 1: บิลทั้งหมดเดือนนี้ (Total bill_room_information this month - status != 2)
+    // Card 1: บิลทั้งหมด (Total bill_room_information - เฉพาะ bill_information.status = 1 ส่งแล้ว)
     const totalBillRoomsQuery = `
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status != 2
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status != 2
     `;
     const [totalBillRoomsResult] = await db.execute(totalBillRoomsQuery, [customer_id]);
     const totalBillRooms = totalBillRoomsResult[0].total;
@@ -709,7 +741,7 @@ export const getPaymentSummaryData = async (req, res) => {
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status != 2
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status != 2
         AND br.create_date >= ? AND br.create_date <= ?
     `;
     const [billRoomsThisMonthResult] = await db.execute(billRoomsThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
@@ -772,12 +804,12 @@ export const getPaymentSummaryData = async (req, res) => {
     const [rejectedPaymentThisMonthResult] = await db.execute(rejectedPaymentThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
     const rejectedPaymentThisMonth = rejectedPaymentThisMonthResult[0].total;
 
-    // Card 5: รอชำระ (bill_room_information.status = 0)
+    // Card 5: รอชำระ (bill_room_information.status = 0 และ bill_information.status = 1 ส่งแล้ว)
     const unpaidBillRoomsQuery = `
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status = 0
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
     `;
     const [unpaidBillRoomsResult] = await db.execute(unpaidBillRoomsQuery, [customer_id]);
     const totalUnpaidBillRooms = unpaidBillRoomsResult[0].total;
@@ -787,7 +819,7 @@ export const getPaymentSummaryData = async (req, res) => {
       SELECT COUNT(*) as total
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
-      WHERE b.customer_id = ? AND br.status = 0
+      WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
         AND br.create_date >= ? AND br.create_date <= ?
     `;
     const [unpaidBillRoomsThisMonthResult] = await db.execute(unpaidBillRoomsThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);

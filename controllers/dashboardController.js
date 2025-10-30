@@ -150,9 +150,12 @@ export const getSummary = async (req, res) => {
     );
     const paid_this_month = paidThisMonthRows[0].paid_this_month;
 
-    // Card 9: รอตรวจสอบ (pending payment approval)
+    // Card 9: รอตรวจสอบ (bill_room_information status = 5 และ bill_information status = 1)
     const [pendingPaymentRows] = await db.execute(
-      `SELECT COUNT(*) as pending_payment FROM payment_information WHERE customer_id = ? AND status = 0`,
+      `SELECT COUNT(*) as pending_payment
+       FROM bill_room_information br
+       INNER JOIN bill_information b ON br.bill_id = b.id
+       WHERE b.customer_id = ? AND b.status = 1 AND br.status = 5`,
       [customer_id]
     );
     const pending_payment = pendingPaymentRows[0].pending_payment;
@@ -405,13 +408,13 @@ export const getBillStatus = async (req, res) => {
     );
     const paid_bills = paidBillsRows[0].paid_bills;
 
-    // นับบิลรอชำระ (status = 0 หรือ 4 แต่ยังไม่เกินกำหนด)
+    // นับบิลรอชำระ (status = 0 หรือ 5 และยังไม่เกินกำหนด)
     const [pendingBillsRows] = await db.execute(
       `SELECT COUNT(*) as pending_bills
        FROM bill_room_information br
        LEFT JOIN bill_information b ON br.bill_id = b.id
        WHERE br.customer_id = ?
-       AND br.status IN (0, 4)
+       AND br.status IN (0, 5)
        AND b.expire_date >= CURDATE()
        AND b.status = 1
        AND br.status != 2
@@ -420,13 +423,13 @@ export const getBillStatus = async (req, res) => {
     );
     const pending_bills = pendingBillsRows[0].pending_bills;
 
-    // นับบิลเกินกำหนด (status = 0 หรือ 4 และเกินกำหนดแล้ว)
+    // นับบิลเกินกำหนด (status = 0 หรือ 5 และเกินกำหนดแล้ว)
     const [overdueBillsRows] = await db.execute(
       `SELECT COUNT(*) as overdue_bills
        FROM bill_room_information br
        LEFT JOIN bill_information b ON br.bill_id = b.id
        WHERE br.customer_id = ?
-       AND br.status IN (0, 4)
+       AND br.status IN (0, 5)
        AND b.expire_date < CURDATE()
        AND b.status = 1
        AND br.status != 2
@@ -450,7 +453,7 @@ export const getBillStatus = async (req, res) => {
        FROM bill_room_information br
        LEFT JOIN bill_information b ON br.bill_id = b.id
        WHERE br.customer_id = ?
-       AND br.status IN (0, 4)
+       AND br.status IN (0, 5)
        AND DATE(b.expire_date) = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
        AND b.status = 1
        AND br.status != 2
@@ -466,7 +469,7 @@ export const getBillStatus = async (req, res) => {
        FROM bill_room_information br
        LEFT JOIN bill_information b ON br.bill_id = b.id
        WHERE br.customer_id = ?
-       AND br.status IN (0, 4)
+       AND br.status IN (0, 5)
        AND DATE(b.expire_date) = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
        AND b.status = 1
        AND br.status != 2
@@ -482,7 +485,7 @@ export const getBillStatus = async (req, res) => {
        FROM bill_room_information br
        LEFT JOIN bill_information b ON br.bill_id = b.id
        WHERE br.customer_id = ?
-       AND br.status IN (0, 4)
+       AND br.status IN (0, 5)
        AND DATE(b.expire_date) = DATE_ADD(CURDATE(), INTERVAL 3 DAY)
        AND b.status = 1
        AND br.status != 2
@@ -498,7 +501,7 @@ export const getBillStatus = async (req, res) => {
        FROM bill_room_information br
        LEFT JOIN bill_information b ON br.bill_id = b.id
        WHERE br.customer_id = ?
-       AND br.status IN (0, 4)
+       AND br.status IN (0, 5)
        AND DATE(b.expire_date) BETWEEN DATE_ADD(CURDATE(), INTERVAL 4 DAY) AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
        AND b.status = 1
        AND br.status != 2
@@ -739,9 +742,12 @@ export const getActionItems = async (req, res) => {
 
     const actionItems = [];
 
-    // 1. รายการรอตรวจสอบและอนุมัติการชำระเงิน
+    // 1. รายการรอตรวจสอบและอนุมัติการชำระเงิน (bill_room_information status = 5)
     const [pendingPaymentRows] = await db.execute(
-      `SELECT COUNT(*) as count FROM payment_information WHERE customer_id = ? AND status = 0`,
+      `SELECT COUNT(*) as count
+       FROM bill_room_information br
+       INNER JOIN bill_information b ON br.bill_id = b.id
+       WHERE b.customer_id = ? AND b.status = 1 AND br.status = 5`,
       [customer_id]
     );
     const pending_payment_count = pendingPaymentRows[0].count;
