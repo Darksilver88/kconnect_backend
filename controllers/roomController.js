@@ -616,7 +616,108 @@ export const syncFromFirebase = async (req, res) => {
       }
     }
 
-    logger.info(`Sync completed: Rooms (${roomsInserted} inserted, ${roomsUpdated} updated), Members (${membersInserted} inserted, ${membersUpdated} updated)`);
+    // Step 6: Sync bank information from niti_data/niti_bank_list
+    let banksInserted = 0;
+    let banksUpdated = 0;
+
+    try {
+      // Check if niti_data exists
+      const nitiDataPath = `corporation/${customerName}/site/${customerName}/niti_data`;
+      const nitiDataSnapshot = await firestore.collection(nitiDataPath).limit(1).get();
+
+      if (!nitiDataSnapshot.empty) {
+        logger.info('Found niti_data collection, checking for bank list...');
+
+        // Get first doc from niti_data
+        const nitiDataDoc = nitiDataSnapshot.docs[0];
+
+        // Query niti_bank_list subcollection
+        const bankListRef = firestore.collection(`${nitiDataPath}/${nitiDataDoc.id}/niti_bank_list`);
+        const bankListSnapshot = await bankListRef.get();
+
+        if (!bankListSnapshot.empty) {
+          logger.info(`Found ${bankListSnapshot.size} banks in niti_bank_list`);
+
+          for (const bankDoc of bankListSnapshot.docs) {
+            const bankData = bankDoc.data();
+
+            // Extract bank data from Firebase
+            const bankAccount = bankData.bank_account || '';
+            const bankId = bankData.bank_id ? parseInt(bankData.bank_id) : null;
+            const bankNo = bankData.bank_no || '';
+            const type = bankData.type || '';
+            const createDate = bankData.create_date;
+
+            // Skip if bank_no is empty
+            if (!bankNo || bankNo.trim() === '') {
+              logger.warn(`Skipping bank with empty bank_no`);
+              continue;
+            }
+
+            // Check if bank exists (by bank_no and customer_id)
+            const checkBankQuery = `
+              SELECT id FROM bank_information
+              WHERE bank_no = ? AND customer_id = ? AND status != 2
+              LIMIT 1
+            `;
+            const [existingBank] = await db.execute(checkBankQuery, [bankNo, customer_id]);
+
+            if (existingBank.length > 0) {
+              // Update existing bank
+              const bankIdDb = existingBank[0].id;
+
+              const updateBankQuery = `
+                UPDATE bank_information
+                SET bank_account = ?, bank_id = ?, type = ?, update_date = NOW(), update_by = ?
+                WHERE id = ?
+              `;
+              await db.execute(updateBankQuery, [
+                bankAccount,
+                bankId,
+                type,
+                uid,
+                bankIdDb
+              ]);
+              banksUpdated++;
+              logger.debug(`Bank updated: ${bankNo} (ID: ${bankIdDb})`);
+            } else {
+              // Insert new bank
+              // For create_date: convert Firebase timestamp or use NOW()
+              const createDateValue = createDate?._seconds
+                ? `FROM_UNIXTIME(${createDate._seconds})`
+                : 'NOW()';
+
+              const insertBankQuery = `
+                INSERT INTO bank_information
+                (upload_key, bank_account, bank_id, bank_no, type, status, customer_id, create_date, create_by)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ${createDateValue}, ?)
+              `;
+
+              const [bankResult] = await db.execute(insertBankQuery, [
+                generateUploadKey(),
+                bankAccount,
+                bankId,
+                bankNo,
+                type,
+                customer_id,
+                uid
+              ]);
+              banksInserted++;
+              logger.debug(`Bank inserted: ${bankNo} (ID: ${bankResult.insertId})`);
+            }
+          }
+        } else {
+          logger.info('No banks found in niti_bank_list');
+        }
+      } else {
+        logger.info('No niti_data collection found, skipping bank sync');
+      }
+    } catch (bankError) {
+      logger.error('Error syncing banks from Firebase:', bankError);
+      // Don't fail the whole sync, just log the error
+    }
+
+    logger.info(`Sync completed: Rooms (${roomsInserted} inserted, ${roomsUpdated} updated), Members (${membersInserted} inserted, ${membersUpdated} updated), Banks (${banksInserted} inserted, ${banksUpdated} updated)`);
 
     res.json({
       success: true,
@@ -631,6 +732,11 @@ export const syncFromFirebase = async (req, res) => {
           inserted: membersInserted,
           updated: membersUpdated,
           total: membersInserted + membersUpdated
+        },
+        banks: {
+          inserted: banksInserted,
+          updated: banksUpdated,
+          total: banksInserted + banksUpdated
         }
       },
       timestamp: new Date().toISOString()
