@@ -4,7 +4,7 @@ import logger from '../utils/logger.js';
 
 dotenv.config();
 
-let db;
+let pool;
 
 async function initDatabase() {
   try {
@@ -14,21 +14,37 @@ async function initDatabase() {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
+      // Connection pool settings
+      waitForConnections: true,
+      connectionLimit: 10, // Maximum number of connections in pool
+      queueLimit: 0, // Unlimited queued connection requests
+      // Connection management
+      enableKeepAlive: true, // Keep connections alive
+      keepAliveInitialDelay: 0, // Start keep-alive immediately
+      // Handle disconnections
+      connectTimeout: 10000, // 10 seconds
+      // Timezone
+      timezone: '+00:00'
     };
 
-    logger.info('Connecting to MySQL database...', {
+    logger.info('Creating MySQL connection pool...', {
       host: config.host,
       port: config.port,
       user: config.user,
-      database: config.database
+      database: config.database,
+      connectionLimit: config.connectionLimit
     });
 
-    db = await mysql.createConnection(config);
+    pool = mysql.createPool(config);
 
-    logger.info('Connected to MySQL database successfully');
-    return db;
+    // Test the connection
+    const connection = await pool.getConnection();
+    logger.info('MySQL connection pool created successfully');
+    connection.release();
+
+    return pool;
   } catch (error) {
-    logger.error('Database connection failed:', error);
+    logger.error('Database connection pool creation failed:', error);
     logger.error('Error details:', {
       message: error.message,
       code: error.code,
@@ -40,10 +56,10 @@ async function initDatabase() {
 }
 
 function getDatabase() {
-  if (!db) {
-    throw new Error('Database not initialized. Call initDatabase() first.');
+  if (!pool) {
+    throw new Error('Database pool not initialized. Call initDatabase() first.');
   }
-  return db;
+  return pool;
 }
 
 export { initDatabase, getDatabase };
