@@ -565,15 +565,16 @@ export const syncFromFirebase = async (req, res) => {
           // Get status from Firebase member data (default to 1)
           const memberStatus = member.status !== undefined ? parseInt(member.status) : 1;
 
+          // For enter_date: convert Firebase timestamp or use NOW()
+          const enterDateValue = member.create_date?._seconds
+            ? `FROM_UNIXTIME(${member.create_date._seconds})`
+            : 'NOW()';
+
           const insertMemberQuery = `
             INSERT INTO member_information
             (upload_key, prefix_name, full_name, phone_number, email, enter_date, room_id, house_no, user_level, user_type, user_ref, member_ref, customer_id, status, create_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ${enterDateValue}, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `;
-
-          const enterDate = member.create_date?._seconds
-            ? new Date(member.create_date._seconds * 1000)
-            : new Date();
 
           const [memberResult] = await db.execute(insertMemberQuery, [
             generateUploadKey(),
@@ -581,7 +582,7 @@ export const syncFromFirebase = async (req, res) => {
             member.fullName || '',
             member.phone_number || '',
             email,
-            enterDate,
+            // enterDate removed - using FROM_UNIXTIME() or NOW() directly in query
             roomId,
             member.calculated_house_no,
             member.user_level || 'resident',

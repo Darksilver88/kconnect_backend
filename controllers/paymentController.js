@@ -551,7 +551,7 @@ export const getPaymentDetail = async (req, res) => {
              m.email,
              r.title as member_detail,
              r.title as room_title,
-             br.bill_no, br.house_no, br.total_price as bill_total_price,
+             br.bill_no, br.house_no, br.total_price as bill_total_price, br.status as bill_room_status,
              b.id as bill_id, b.title as bill_title, b.detail as bill_detail, b.bill_type_id, b.expire_date, b.send_date,
              bt.title as bill_type_title,
              pt.title as payment_type_title, pt.detail as payment_type_detail

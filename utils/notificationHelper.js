@@ -50,25 +50,42 @@ export async function insertNotificationAudit(db, tableName, rowsIds, customerId
 /**
  * Insert notification audit for bill_room_information when bill is sent
  * @param {Object} db - Database connection
- * @param {number} billId - Bill ID
+ * @param {number} billIdOrBillRoomId - Bill ID or Bill Room ID (depends on options.mode)
  * @param {string} customerId - Customer ID
  * @param {number} userId - User ID
  * @param {string|null} remark - Optional remark (for backward compatibility)
- * @param {Object} options - Optional fields (not used, hardcoded values applied)
+ * @param {Object} options - Optional fields: { mode: 'bill' | 'bill_room' }
  * @returns {Promise<number>} - Number of records inserted
  */
-export async function insertNotificationAuditForBill(db, billId, customerId, userId, remark = null, options = {}) {
-  // Get all bill_room_information for this bill with member details
-  const billRoomQuery = `
-    SELECT id, customer_id, house_no, member_name
-    FROM bill_room_information
-    WHERE bill_id = ? AND status != 2
-  `;
+export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, customerId, userId, remark = null, options = {}) {
+  const { mode = 'bill' } = options;
 
-  const [billRoomRows] = await db.execute(billRoomQuery, [billId]);
+  // Get all bill_room_information
+  let billRoomQuery;
+  let queryParams;
+
+  if (mode === 'bill_room') {
+    // Query single bill_room by ID
+    billRoomQuery = `
+      SELECT id, customer_id, house_no, member_name
+      FROM bill_room_information
+      WHERE id = ? AND status != 2
+    `;
+    queryParams = [billIdOrBillRoomId];
+  } else {
+    // Query all bill_rooms by bill_id (default)
+    billRoomQuery = `
+      SELECT id, customer_id, house_no, member_name
+      FROM bill_room_information
+      WHERE bill_id = ? AND status != 2
+    `;
+    queryParams = [billIdOrBillRoomId];
+  }
+
+  const [billRoomRows] = await db.execute(billRoomQuery, queryParams);
 
   if (billRoomRows.length === 0) {
-    logger.debug(`No bill_room_information found for bill_id=${billId}`);
+    logger.debug(`No bill_room_information found for ${mode === 'bill_room' ? 'bill_room_id' : 'bill_id'}=${billIdOrBillRoomId}`);
     return 0;
   }
 
@@ -128,6 +145,6 @@ export async function insertNotificationAuditForBill(db, billId, customerId, use
     insertedCount++;
   }
 
-  logger.info(`Notification audit inserted: ${insertedCount} records for bill_id=${billId} (customer_id=${customerId})`);
+  logger.info(`Notification audit inserted: ${insertedCount} records for ${mode === 'bill_room' ? 'bill_room_id' : 'bill_id'}=${billIdOrBillRoomId} (customer_id=${customerId})`);
   return insertedCount;
 }

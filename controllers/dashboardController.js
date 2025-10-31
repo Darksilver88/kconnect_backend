@@ -291,47 +291,74 @@ export const getBillingRevenue = async (req, res) => {
     const thaiMonths = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
                         'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 
-    // สร้าง array สำหรับเก็บข้อมูลแต่ละเดือน
+    // Query ข้อมูลทั้งหมดในคราวเดียว โดยใช้ DATE_SUB ใน MySQL
+    const query = `
+      SELECT
+        DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y') as year,
+        DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%m') as month,
+        COALESCE(SUM(br.total_price), 0) as billed_amount,
+        COALESCE(SUM(CASE WHEN bt.transaction_amount IS NOT NULL THEN bt.transaction_amount ELSE 0 END), 0) as revenue_amount
+      FROM (
+        SELECT 0 as n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3
+        UNION SELECT 4 UNION SELECT 5 UNION SELECT 6 UNION SELECT 7
+        UNION SELECT 8 UNION SELECT 9 UNION SELECT 10 UNION SELECT 11
+      ) months
+      LEFT JOIN bill_room_information br ON
+        br.customer_id = ?
+        AND YEAR(DATE_SUB(CURDATE(), INTERVAL months.n MONTH)) = YEAR(br.create_date)
+        AND MONTH(DATE_SUB(CURDATE(), INTERVAL months.n MONTH)) = MONTH(br.create_date)
+        AND br.status != 2
+      LEFT JOIN bill_information b ON br.bill_id = b.id AND b.status = 1 AND b.status != 2
+      LEFT JOIN bill_transaction_information bt ON
+        bt.customer_id = ?
+        AND YEAR(DATE_SUB(CURDATE(), INTERVAL months.n MONTH)) = YEAR(bt.pay_date)
+        AND MONTH(DATE_SUB(CURDATE(), INTERVAL months.n MONTH)) = MONTH(bt.pay_date)
+        AND bt.status != 2
+      WHERE months.n < ?
+      GROUP BY year, month
+      ORDER BY year, month
+    `;
+
+    // เปลี่ยนเป็น query แบบ individual สำหรับแต่ละเดือน (เพื่อความชัดเจน)
     const chartData = [];
 
-    // Loop ย้อนหลังตาม duration
     for (let i = duration - 1; i >= 0; i--) {
-      // คำนวณ year และ month ย้อนหลัง
-      const targetDate = new Date();
-      targetDate.setMonth(targetDate.getMonth() - i);
-      const year = targetDate.getFullYear();
-      const month = targetDate.getMonth() + 1; // 1-12
-
-      // ค่าเรียกเก็บ (total billed amount) - ยอดรวมจาก bill_room_information
+      // Query ค่าเรียกเก็บ (billed amount)
       const [billedRows] = await db.execute(
-        `SELECT COALESCE(SUM(br.total_price), 0) as billed_amount
+        `SELECT
+          YEAR(DATE_SUB(CURDATE(), INTERVAL ? MONTH)) as year,
+          MONTH(DATE_SUB(CURDATE(), INTERVAL ? MONTH)) as month,
+          COALESCE(SUM(br.total_price), 0) as billed_amount
          FROM bill_room_information br
          LEFT JOIN bill_information b ON br.bill_id = b.id
          WHERE br.customer_id = ?
-         AND YEAR(b.create_date) = ?
-         AND MONTH(b.create_date) = ?
+         AND YEAR(br.create_date) = YEAR(DATE_SUB(CURDATE(), INTERVAL ? MONTH))
+         AND MONTH(br.create_date) = MONTH(DATE_SUB(CURDATE(), INTERVAL ? MONTH))
          AND b.status = 1
          AND br.status != 2
          AND b.status != 2`,
-        [customer_id, year, month]
+        [i, i, customer_id, i, i]
       );
+
+      const year = billedRows[0].year;
+      const month = billedRows[0].month;
       const billed_amount = parseFloat(billedRows[0].billed_amount);
 
-      // รายรับจริง (actual revenue) - ยอดรวมจาก bill_transaction_information
+      // Query รายรับจริง (revenue amount)
       const [revenueRows] = await db.execute(
         `SELECT COALESCE(SUM(bt.transaction_amount), 0) as revenue_amount
          FROM bill_transaction_information bt
          WHERE bt.customer_id = ?
-         AND YEAR(bt.pay_date) = ?
-         AND MONTH(bt.pay_date) = ?
+         AND YEAR(bt.pay_date) = YEAR(DATE_SUB(CURDATE(), INTERVAL ? MONTH))
+         AND MONTH(bt.pay_date) = MONTH(DATE_SUB(CURDATE(), INTERVAL ? MONTH))
          AND bt.status != 2`,
-        [customer_id, year, month]
+        [customer_id, i, i]
       );
       const revenue_amount = parseFloat(revenueRows[0].revenue_amount);
 
       // เพิ่มข้อมูลเข้า array
       chartData.push({
-        month: thaiMonths[month - 1], // แปลงเป็นชื่อเดือนภาษาไทย
+        month: thaiMonths[month - 1],
         month_number: month,
         year: year,
         billed: billed_amount,

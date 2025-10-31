@@ -104,19 +104,19 @@ export const insertBill = async (req, res) => {
 
     const db = getDatabase();
 
-    // Set send_date to current date if status is 1
-    const sendDate = parseInt(status) === 1 ? new Date() : null;
-
-    // Adjust expire_date time to 23:59:59
+    // Adjust expire_date time to 23:59:59 (UTC timezone)
     const expireDateObj = new Date(expire_date);
-    expireDateObj.setHours(23);
-    expireDateObj.setMinutes(59);
-    expireDateObj.setSeconds(59);
-    expireDateObj.setMilliseconds(0);
+    expireDateObj.setUTCHours(23);
+    expireDateObj.setUTCMinutes(59);
+    expireDateObj.setUTCSeconds(59);
+    expireDateObj.setUTCMilliseconds(0);
+
+    // For send_date: use NOW() if status is 1, otherwise NULL
+    const sendDateValue = parseInt(status) === 1 ? 'NOW()' : 'NULL';
 
     const insertQuery = `
       INSERT INTO ${TABLE_INFORMATION} (upload_key, title, bill_type_id, detail, expire_date, send_date, remark, customer_id, status, create_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ${sendDateValue}, ?, ?, ?, ?)
     `;
 
     const billTypeIdValue = parseInt(bill_type_id);
@@ -127,7 +127,7 @@ export const insertBill = async (req, res) => {
       billTypeIdValue,
       detail?.trim(),
       expireDateObj,
-      sendDate,
+      // sendDate removed - using NOW() or NULL directly in query
       remark?.trim() || null,
       customer_id?.trim(),
       status,
@@ -147,7 +147,7 @@ export const insertBill = async (req, res) => {
         bill_type_id: billTypeIdValue,
         detail,
         expire_date,
-        send_date: sendDate,
+        send_date: parseInt(status) === 1 ? new Date().toISOString() : null,
         remark,
         customer_id,
         status,
@@ -283,12 +283,12 @@ export const updateBill = async (req, res) => {
         sendDateUpdate = ', send_date = NOW()';
       }
 
-      // Adjust expire_date time to 23:59:59
+      // Adjust expire_date time to 23:59:59 (UTC timezone)
       const expireDateObj = new Date(expire_date);
-      expireDateObj.setHours(23);
-      expireDateObj.setMinutes(59);
-      expireDateObj.setSeconds(59);
-      expireDateObj.setMilliseconds(0);
+      expireDateObj.setUTCHours(23);
+      expireDateObj.setUTCMinutes(59);
+      expireDateObj.setUTCSeconds(59);
+      expireDateObj.setUTCMilliseconds(0);
 
       const updateQuery = `
         UPDATE ${TABLE_INFORMATION}
@@ -960,19 +960,19 @@ export const insertBillWithExcel = async (req, res) => {
       const generatedBillNo = `BILL-${year}-${datePrefix}-${String(billRunNumber).padStart(3, '0')}`;
 
       // Step 8: Insert bill_information
-      const sendDate = parseInt(status) === 1 ? new Date() : null;
-
-      // Adjust expire_date time to 23:59:59
-      // Parse date string and set time to 23:59:59 in local timezone
+      // Adjust expire_date time to 23:59:59 (UTC timezone)
       const expireDateObj = new Date(expire_date);
-      expireDateObj.setHours(23);
-      expireDateObj.setMinutes(59);
-      expireDateObj.setSeconds(59);
-      expireDateObj.setMilliseconds(0);
+      expireDateObj.setUTCHours(23);
+      expireDateObj.setUTCMinutes(59);
+      expireDateObj.setUTCSeconds(59);
+      expireDateObj.setUTCMilliseconds(0);
+
+      // For send_date: use NOW() if status is 1, otherwise NULL
+      const sendDateValue = parseInt(status) === 1 ? 'NOW()' : 'NULL';
 
       const billInsertQuery = `
         INSERT INTO ${TABLE_INFORMATION} (upload_key, bill_no, title, bill_type_id, detail, expire_date, send_date, customer_id, status, create_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ${sendDateValue}, ?, ?, ?)
       `;
 
       const billTypeIdValue = parseInt(bill_type_id);
@@ -984,7 +984,7 @@ export const insertBillWithExcel = async (req, res) => {
         billTypeIdValue,
         detail?.trim(),
         expireDateObj,
-        sendDate,
+        // sendDate removed - using NOW() or NULL directly in query
         customer_id?.trim(),
         status,
         uid
@@ -1328,20 +1328,50 @@ export const getBillRoomList = async (req, res) => {
     // isOverdue already calculated above (line 993)
     const status_3 = isOverdue ? summary.status_0 : 0;
 
-    // Get data with pagination
+    // Get notification resend interval from config
+    const configQuery = `
+      SELECT config_value
+      FROM app_config
+      WHERE config_key = 'notification_resend_interval_minutes' AND is_active = TRUE
+    `;
+    const [configRows] = await db.execute(configQuery);
+    const intervalMinutes = configRows.length > 0 ? parseInt(configRows[0].config_value) : 30;
+
+    // Get data with pagination + notification status
     const dataQuery = `
-      SELECT id, bill_id, bill_no, house_no, member_name, total_price, remark, status,
-             create_date, create_by
-      FROM ${TABLE_ROOM}
+      SELECT
+        br.id, br.bill_id, br.bill_no, br.house_no, br.member_name,
+        br.total_price, br.remark, br.status, br.create_date, br.create_by,
+        na.last_notification_date,
+        TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW()) as minutes_since_last_notification,
+        CASE
+          WHEN na.last_notification_date IS NULL THEN 1
+          WHEN TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW()) >= ${intervalMinutes} THEN 1
+          ELSE 0
+        END as can_send_notification,
+        CASE
+          WHEN na.last_notification_date IS NULL THEN NULL
+          WHEN TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW()) >= ${intervalMinutes} THEN 0
+          ELSE ${intervalMinutes} - TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW())
+        END as remaining_minutes
+      FROM ${TABLE_ROOM} br
+      LEFT JOIN (
+        SELECT
+          rows_id,
+          MAX(create_date) as last_notification_date
+        FROM notification_audit_information
+        WHERE table_name = 'bill_room_information'
+        GROUP BY rows_id
+      ) na ON br.id = na.rows_id
       ${whereClause}
-      ORDER BY create_date ASC
+      ORDER BY br.create_date ASC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
 
     const [rows] = await db.execute(dataQuery, queryParams);
 
     // Format dates for items and adjust status for overdue items
-    const formattedRows = addFormattedDatesToList(rows, ['create_date']).map(row => {
+    const formattedRows = addFormattedDatesToList(rows, ['create_date', 'last_notification_date']).map(row => {
       // If status = 0 and current date > expire_date, change status to 3
       if (row.status === 0 && isOverdue) {
         row.status = 3;
@@ -1554,11 +1584,6 @@ export const getSummaryData = async (req, res) => {
 
     const db = getDatabase();
 
-    // Get current month range (start and end of month)
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
     // Card 1: บิลในระบบ (Total bills in system)
     const billCountQuery = `
       SELECT COUNT(*) as total
@@ -1569,13 +1594,15 @@ export const getSummaryData = async (req, res) => {
     const totalBills = billCountResult[0].total;
 
     // Card 1: บิลที่สร้างในเดือนนี้
+    // Use MySQL DATE functions for timezone-safe month range
     const billThisMonthQuery = `
       SELECT COUNT(*) as total
       FROM ${TABLE_INFORMATION}
       WHERE customer_id = ? AND status != 2
-        AND create_date >= ? AND create_date <= ?
+        AND create_date >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')
+        AND create_date <= LAST_DAY(NOW()) + INTERVAL 1 DAY - INTERVAL 1 SECOND
     `;
-    const [billThisMonthResult] = await db.execute(billThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const [billThisMonthResult] = await db.execute(billThisMonthQuery, [customer_id]);
     const billsThisMonth = billThisMonthResult[0].total;
 
     // Card 2: บิลที่แจ้งแล้ว (Sent bills - status = 1)
@@ -1592,9 +1619,10 @@ export const getSummaryData = async (req, res) => {
       SELECT COUNT(*) as total
       FROM ${TABLE_INFORMATION}
       WHERE customer_id = ? AND status = 1
-        AND send_date >= ? AND send_date <= ?
+        AND send_date >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')
+        AND send_date <= LAST_DAY(NOW()) + INTERVAL 1 DAY - INTERVAL 1 SECOND
     `;
-    const [sentBillThisMonthResult] = await db.execute(sentBillThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const [sentBillThisMonthResult] = await db.execute(sentBillThisMonthQuery, [customer_id]);
     const sentBillsThisMonth = sentBillThisMonthResult[0].total;
 
     // Card 3: รอการชำระ (Pending payment - bill_room_information.status = 0 และ bill_information.status = 1 เท่านั้น)
@@ -1613,9 +1641,10 @@ export const getSummaryData = async (req, res) => {
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status = 1 AND br.status = 0
-        AND br.create_date >= ? AND br.create_date <= ?
+        AND br.create_date >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')
+        AND br.create_date <= LAST_DAY(NOW()) + INTERVAL 1 DAY - INTERVAL 1 SECOND
     `;
-    const [pendingPaymentThisMonthResult] = await db.execute(pendingPaymentThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const [pendingPaymentThisMonthResult] = await db.execute(pendingPaymentThisMonthQuery, [customer_id]);
     const pendingPaymentThisMonth = pendingPaymentThisMonthResult[0].total;
 
     // Card 4: ชำระเรียบร้อย (Paid - bill_room_information.status = 1)
@@ -1634,9 +1663,10 @@ export const getSummaryData = async (req, res) => {
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status != 2 AND br.status = 1
-        AND br.create_date >= ? AND br.create_date <= ?
+        AND br.create_date >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')
+        AND br.create_date <= LAST_DAY(NOW()) + INTERVAL 1 DAY - INTERVAL 1 SECOND
     `;
-    const [paidThisMonthResult] = await db.execute(paidThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const [paidThisMonthResult] = await db.execute(paidThisMonthQuery, [customer_id]);
     const paidThisMonth = paidThisMonthResult[0].total;
 
     // Card 5: ห้องทั้งหมด (Total unique rooms - เฉพาะ bill_information.status = 1 ส่งแล้ว)
@@ -1655,9 +1685,10 @@ export const getSummaryData = async (req, res) => {
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
       WHERE b.customer_id = ? AND b.status = 1 AND br.status != 2
-        AND br.create_date >= ? AND br.create_date <= ?
+        AND br.create_date >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')
+        AND br.create_date <= LAST_DAY(NOW()) + INTERVAL 1 DAY - INTERVAL 1 SECOND
     `;
-    const [newRoomsThisMonthResult] = await db.execute(newRoomsThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const [newRoomsThisMonthResult] = await db.execute(newRoomsThisMonthQuery, [customer_id]);
     const newRoomsThisMonth = newRoomsThisMonthResult[0].total;
 
     // Calculate percentage for rooms (new rooms / total rooms * 100)
@@ -2144,7 +2175,7 @@ export const getBillExcelList = async (req, res) => {
 
 export const sendNotificationEach = async (req, res) => {
   try {
-    const { customer_id, table_name, id, uid, title, detail, topic, type, receiver } = req.body;
+    const { customer_id, table_name, id, uid } = req.body;
 
     // Validate required fields
     if (!customer_id || !table_name || !id || !uid) {
@@ -2167,9 +2198,14 @@ export const sendNotificationEach = async (req, res) => {
     const [configRows] = await db.execute(configQuery);
     const intervalMinutes = configRows.length > 0 ? parseInt(configRows[0].config_value) : 30;
 
-    // Check last notification audit create_date
+    // Check last notification audit create_date for this specific bill_room
+    // Check ANY notification (regardless of remark) to prevent spam
+    // Use TIMESTAMPDIFF to calculate minutes directly in MySQL (timezone-safe)
     const lastNotificationQuery = `
-      SELECT create_date
+      SELECT
+        create_date,
+        remark,
+        TIMESTAMPDIFF(MINUTE, create_date, NOW()) as minutes_passed
       FROM notification_audit_information
       WHERE table_name = ? AND rows_id = ? AND customer_id = ?
       ORDER BY create_date DESC
@@ -2178,10 +2214,7 @@ export const sendNotificationEach = async (req, res) => {
     const [lastNotificationRows] = await db.execute(lastNotificationQuery, [table_name, parseInt(id), customer_id]);
 
     if (lastNotificationRows.length > 0) {
-      const lastCreateDate = new Date(lastNotificationRows[0].create_date);
-      const currentDate = new Date();
-      const timeDiffMs = currentDate - lastCreateDate;
-      const timeDiffMinutes = Math.floor(timeDiffMs / 1000 / 60);
+      const timeDiffMinutes = lastNotificationRows[0].minutes_passed;
 
       // Check if enough time has passed
       if (timeDiffMinutes < intervalMinutes) {
@@ -2191,7 +2224,8 @@ export const sendNotificationEach = async (req, res) => {
           error: 'Notification sent too recently',
           message: `ต้องรออีก ${remainingMinutes} นาที ก่อนส่งการแจ้งเตือนอีกครั้ง`,
           details: {
-            last_sent: lastCreateDate,
+            last_sent: lastNotificationRows[0].create_date,
+            last_remark: lastNotificationRows[0].remark,
             interval_required_minutes: intervalMinutes,
             time_passed_minutes: timeDiffMinutes,
             remaining_minutes: remainingMinutes
@@ -2200,25 +2234,24 @@ export const sendNotificationEach = async (req, res) => {
       }
     }
 
-    // Insert new notification audit
-    const insertQuery = `
-      INSERT INTO notification_audit_information (
-        table_name, rows_id, title, detail, topic, type, receiver, customer_id, remark, create_by
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    const [result] = await db.execute(insertQuery, [
-      table_name,
-      parseInt(id),
-      title || null,
-      detail || null,
-      topic || null,
-      type || null,
-      receiver || null,
+    // Call helper function to insert notification audit
+    // mode='bill_room' creates notification for single bill_room only
+    const insertedCount = await insertNotificationAuditForBill(
+      db,
+      parseInt(id),      // bill_room_id
       customer_id,
-      'ส่งอีกครั้ง',
-      uid
-    ]);
+      uid,
+      'ส่งอีกครั้ง',     // remark
+      { mode: 'bill_room' }
+    );
+
+    if (insertedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill room not found or notification could not be created',
+        message: 'ไม่พบข้อมูล bill_room หรือไม่สามารถสร้างการแจ้งเตือนได้'
+      });
+    }
 
     logger.info(`Notification resent for ${table_name} ID: ${id} by user ${uid}`);
 
@@ -2226,17 +2259,12 @@ export const sendNotificationEach = async (req, res) => {
       success: true,
       message: 'Notification sent successfully',
       data: {
-        notification_id: result.insertId,
         table_name,
         rows_id: parseInt(id),
-        title,
-        detail,
-        topic,
-        type,
-        receiver,
         customer_id,
         remark: 'ส่งอีกครั้ง',
-        create_by: uid
+        create_by: uid,
+        notifications_created: insertedCount
       },
       timestamp: new Date().toISOString()
     });

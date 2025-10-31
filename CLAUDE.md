@@ -1101,6 +1101,133 @@ logger.info(`User ${uid} deleted news ID: ${id}`);
 logger.error('Database connection failed:', error);
 ```
 
+## Timezone & Date Handling Best Practices
+
+**IMPORTANT**: Always use MySQL date functions (`NOW()`, `CURDATE()`, `FROM_UNIXTIME()`) instead of JavaScript `new Date()` when inserting/updating timestamp fields to avoid timezone mismatch issues.
+
+**Database Configuration**:
+- MySQL timezone set to UTC (+00:00) via `timezone: '+00:00'` in database config
+- Server may run in different timezone (e.g., +07:00 for Thailand)
+- Passing `new Date()` directly causes 7-hour timezone conversion error
+
+**✅ CORRECT PATTERNS:**
+
+### 1. Current Timestamp (INSERT/UPDATE)
+```javascript
+// ✅ Use NOW() function
+const query = `
+  INSERT INTO table (create_date, send_date)
+  VALUES (NOW(), NOW())
+`;
+await db.execute(query, []);
+
+// ✅ Use NOW() for conditional values
+const sendDateValue = status === 1 ? 'NOW()' : 'NULL';
+const query = `
+  INSERT INTO table (send_date)
+  VALUES (${sendDateValue})
+`;
+```
+
+### 2. Date Calculations (Month Range, Date Manipulation)
+```javascript
+// ✅ Use MySQL DATE functions
+const query = `
+  SELECT * FROM table
+  WHERE create_date >= DATE_FORMAT(NOW(), '%Y-%m-01 00:00:00')
+    AND create_date <= LAST_DAY(NOW()) + INTERVAL 1 DAY - INTERVAL 1 SECOND
+`;
+
+// ✅ Calculate expire_date with setHours (special case)
+const expireDateObj = new Date(expire_date);
+expireDateObj.setHours(23, 59, 59, 0);  // Set to end of day
+const query = `INSERT INTO table (expire_date) VALUES (?)`;
+await db.execute(query, [expireDateObj]);  // OK because it's calculated
+```
+
+### 3. Time Difference Calculations
+```javascript
+// ✅ Use TIMESTAMPDIFF in MySQL
+const query = `
+  SELECT TIMESTAMPDIFF(MINUTE, create_date, NOW()) as minutes_passed
+  FROM table WHERE id = ?
+`;
+```
+
+### 4. Firebase Timestamp Conversion
+```javascript
+// ✅ Use FROM_UNIXTIME for Firebase timestamps
+const enterDateValue = member.create_date?._seconds
+  ? `FROM_UNIXTIME(${member.create_date._seconds})`
+  : 'NOW()';
+
+const query = `
+  INSERT INTO member_information (enter_date)
+  VALUES (${enterDateValue})
+`;
+```
+
+### 5. Date Formatting for Display
+```javascript
+// ✅ Use UTC methods to format dates without timezone conversion
+const day = String(d.getUTCDate()).padStart(2, '0');
+const hours = String(d.getUTCHours()).padStart(2, '0');
+
+// ❌ NEVER use local timezone methods for UTC timestamps
+const day = String(d.getDate()).padStart(2, '0');  // Converts to +07:00
+const hours = String(d.getHours()).padStart(2, '0');  // Shows wrong time
+```
+
+### 6. Response JSON (Frontend Display)
+```javascript
+// ✅ Use toISOString() for response only
+res.json({
+  success: true,
+  data: {
+    send_date: new Date().toISOString(),  // OK in response
+    create_date: result.create_date       // From database
+  },
+  timestamp: new Date().toISOString()     // OK in response
+});
+```
+
+**❌ INCORRECT PATTERNS:**
+
+```javascript
+// ❌ NEVER pass new Date() to database operations
+const sendDate = new Date();  // Creates Date in local timezone
+await db.execute('INSERT INTO table (send_date) VALUES (?)', [sendDate]);
+// → Causes timezone conversion error!
+
+// ❌ NEVER use new Date() for month range queries
+const startOfMonth = new Date(year, month, 1);
+await db.execute('SELECT * WHERE date >= ?', [startOfMonth]);
+// → Use DATE_FORMAT(NOW(), '%Y-%m-01') instead
+
+// ❌ NEVER calculate time difference in JavaScript
+const diff = new Date() - new Date(row.create_date);
+// → Use TIMESTAMPDIFF in MySQL instead
+```
+
+**When to Use Each:**
+- **NOW()**: Current timestamp for create_date, update_date, send_date
+- **CURDATE()**: Current date without time
+- **TIMESTAMPDIFF()**: Calculate time differences (minutes, hours, days)
+- **DATE_FORMAT()**: Format dates or extract date components
+- **FROM_UNIXTIME()**: Convert Unix timestamps (e.g., from Firebase)
+- **new Date().setHours()**: Calculate future dates with specific times (expire_date)
+- **new Date().toISOString()**: Response JSON only, never for database
+- **getUTCDate(), getUTCHours(), etc.**: Format UTC timestamps for display without timezone conversion
+- **getDate(), getHours(), etc.**: ❌ NEVER use with UTC timestamps (causes +7 hour shift)
+
+**Common Use Cases:**
+- ✅ `send_date = NOW()` when status changes to 1
+- ✅ `update_date = NOW()` in UPDATE queries
+- ✅ `TIMESTAMPDIFF(MINUTE, last_notification, NOW())` for interval checks
+- ✅ `WHERE create_date >= DATE_FORMAT(NOW(), '%Y-%m-01')` for current month
+- ✅ `FROM_UNIXTIME(firebase_seconds)` for Firebase timestamp conversion
+- ✅ Calculate expire_date with `new Date()` → `setHours(23, 59, 59)` → pass as parameter
+
 ## Firebase Integration
 
 **Configuration**: Firebase Admin SDK initialized in `config/firebase.js`
