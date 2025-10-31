@@ -291,6 +291,23 @@ MySQL connection configured via .env file:
 - `delete_date` - TIMESTAMP NULL
 - `delete_by` - INT NULL
 
+**bank_information table:**
+- `id` - INT AUTO_INCREMENT PRIMARY KEY
+- `upload_key` - CHAR(32) NOT NULL
+- `bank_account` - VARCHAR(255) NULL (account holder name)
+- `bank_id` - INT NULL (bank identifier)
+- `bank_no` - VARCHAR(50) NOT NULL (account number, unique per customer)
+- `type` - VARCHAR(50) NULL (account type)
+- `customer_id` - VARCHAR(255) NOT NULL
+- `status` - INT NOT NULL DEFAULT 1
+- `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `create_by` - INT NOT NULL
+- `update_date` - TIMESTAMP NULL
+- `update_by` - INT NULL
+- `delete_date` - TIMESTAMP NULL
+- `delete_by` - INT NULL
+- Unique constraint: bank_no + customer_id (checked during sync for insert/update)
+
 **bill_information table:**
 - `id` - INT AUTO_INCREMENT PRIMARY KEY
 - `upload_key` - CHAR(32) NOT NULL
