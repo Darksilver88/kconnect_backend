@@ -5,6 +5,7 @@ import { formatNumber, formatPrice } from '../utils/numberFormatter.js';
 import { getUploadType } from '../utils/storageManager.js';
 import { insertNotificationAuditForBill } from '../utils/notificationHelper.js';
 import xlsx from 'xlsx';
+import ExcelJS from 'exceljs';
 import fs from 'fs';
 import https from 'https';
 import http from 'http';
@@ -1213,7 +1214,7 @@ export const getBillList = async (req, res) => {
 
 export const getBillRoomList = async (req, res) => {
   try {
-    const { page = 1, limit = 10, keyword, bill_id, status } = req.query;
+    const { page = 1, limit = 10, keyword, bill_id, status, type } = req.query;
 
     if (!bill_id) {
       return res.status(400).json({
@@ -1381,6 +1382,106 @@ export const getBillRoomList = async (req, res) => {
 
     // Format bill info dates (including expire_date)
     const formattedBillInfo = addFormattedDates(billInfo, ['create_date', 'send_date', 'expire_date']);
+
+    // Check if Excel export is requested
+    if (type === 'excel') {
+      // Create workbook and worksheet
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Bill Room List');
+
+      // Define columns
+      worksheet.columns = [
+        { header: 'เลขที่บิล', key: 'bill_no', width: 20 },
+        { header: 'เลขห้อง', key: 'house_no', width: 12 },
+        { header: 'ชื่อลูกบ้าน', key: 'member_name', width: 25 },
+        { header: 'ยอดเงิน', key: 'total_price', width: 15 },
+        { header: 'วันครบกำหนด', key: 'expire_date', width: 15 },
+        { header: 'สถานะชำระ', key: 'payment_status', width: 15 }
+      ];
+
+      // Style header row
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 25;
+
+      headerRow.eachCell({ includeEmpty: false }, (cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4472C4' }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF000000' } },
+          left: { style: 'thin', color: { argb: 'FF000000' } },
+          bottom: { style: 'thin', color: { argb: 'FF000000' } },
+          right: { style: 'thin', color: { argb: 'FF000000' } }
+        };
+      });
+
+      // Add data rows
+      formattedRows.forEach(item => {
+        // Extract date only from expire_date_formatted (format: DD/MM/YYYY HH:mm:ss -> DD/MM/YYYY)
+        const expireDateOnly = formattedBillInfo.expire_date_formatted
+          ? formattedBillInfo.expire_date_formatted.split(' ')[0]
+          : '-';
+
+        // Determine payment status text
+        let paymentStatus = '-';
+        if (formattedBillInfo.status == 0) {
+          // Bill not sent yet
+          paymentStatus = '-';
+        } else if (formattedBillInfo.status == 1) {
+          // Bill sent, check item status
+          if (item.status === 1) {
+            paymentStatus = 'ชำระแล้ว';
+          } else if (item.status === 0) {
+            paymentStatus = 'รอชำระ';
+          } else if (item.status === 3) {
+            paymentStatus = 'เกินกำหนด';
+          } else if (item.status === 4) {
+            paymentStatus = 'ชำระบางส่วน';
+          }
+        }
+
+        const rowData = {
+          bill_no: item.bill_no || '-',
+          house_no: item.house_no || '-',
+          member_name: item.member_name || '-',
+          total_price: item.total_price ? `฿${formatNumber(item.total_price)}` : '-',
+          expire_date: expireDateOnly,
+          payment_status: paymentStatus
+        };
+
+        const excelRow = worksheet.addRow(rowData);
+
+        // Add border to data cells
+        excelRow.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+            left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+            bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+            right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+          };
+          cell.alignment = { vertical: 'middle' };
+        });
+      });
+
+      // Generate Excel file buffer
+      const excelBuffer = await workbook.xlsx.writeBuffer();
+
+      // Generate file name with timestamp
+      const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      const fileName = `bill_room_list_${bill_id}_${timestamp}.xlsx`;
+
+      // Set response headers for file download
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length);
+
+      // Send Excel file
+      return res.send(excelBuffer);
+    }
 
     res.json({
       success: true,

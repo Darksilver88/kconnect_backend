@@ -3,6 +3,7 @@ import logger from '../utils/logger.js';
 import { addFormattedDatesToList } from '../utils/dateFormatter.js';
 import { formatPrice } from '../utils/numberFormatter.js';
 import { getFileUrl } from '../utils/storageManager.js';
+import ExcelJS from 'exceljs';
 
 const MENU = 'payment';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -328,7 +329,7 @@ export const updatePayment = async (req, res) => {
 
 export const getPaymentList = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, keyword, customer_id, amount_range, date_range } = req.query;
+    const { page = 1, limit = 10, status, keyword, customer_id, amount_range, date_range, type } = req.query;
 
     if (!customer_id) {
       return res.status(400).json({
@@ -397,18 +398,7 @@ export const getPaymentList = async (req, res) => {
     whereClause += ' AND p.customer_id = ?';
     queryParams.push(customer_id);
 
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM ${TABLE_INFORMATION} p
-      LEFT JOIN member_information m ON p.member_id = m.id
-      LEFT JOIN room_information r ON m.room_id = r.id
-      LEFT JOIN bill_room_information br ON p.payable_type = 'bill_room_information' AND p.payable_id = br.id
-      LEFT JOIN bill_information b ON br.bill_id = b.id
-      ${whereClause}
-    `;
-    const [countResult] = await db.execute(countQuery, queryParams);
-    const total = countResult[0].total;
-
+    // For Excel export, we need to query all data (no pagination)
     const dataQuery = `
       SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark,
              p.create_date, p.create_by, p.update_date, p.update_by, p.delete_date, p.delete_by,
@@ -426,7 +416,7 @@ export const getPaymentList = async (req, res) => {
       LEFT JOIN payment_type_information pt ON p.payment_type_id = pt.id
       ${whereClause}
       ORDER BY p.create_date DESC
-      LIMIT ${limitNum} OFFSET ${offset}
+      ${type === 'excel' ? '' : `LIMIT ${limitNum} OFFSET ${offset}`}
     `;
 
     const [rows] = await db.execute(dataQuery, queryParams);
@@ -443,6 +433,126 @@ export const getPaymentList = async (req, res) => {
         row.bill_total_price = formatPrice(parseFloat(row.bill_total_price));
       }
     });
+
+    // Check if Excel export is requested
+    if (type === 'excel') {
+      // Create workbook and worksheet
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Payment List');
+
+      // Check if status is 3 (rejected) to change column headers
+      const isRejected = status === '3' || parseInt(status) === 3;
+
+      // Define columns with headers (conditional based on status)
+      if (isRejected) {
+        worksheet.columns = [
+          { header: 'บิลเลขที่', key: 'bill_no', width: 20 },
+          { header: 'ชื่อลูกบ้าน', key: 'member_name', width: 25 },
+          { header: 'เลขห้อง', key: 'room_no', width: 12 },
+          { header: 'เบอร์โทรศัพท์', key: 'phone_number', width: 15 },
+          { header: 'หัวข้อบิล', key: 'bill_title', width: 30 },
+          { header: 'จำนวนเงิน', key: 'bill_total_price', width: 15 },
+          { header: 'วันที่ปฏิเสธ', key: 'update_date', width: 20 },
+          { header: 'เหตุผล', key: 'remark', width: 30 }
+        ];
+      } else {
+        worksheet.columns = [
+          { header: 'บิลเลขที่', key: 'bill_no', width: 20 },
+          { header: 'ชื่อลูกบ้าน', key: 'member_name', width: 25 },
+          { header: 'เลขห้อง', key: 'room_no', width: 12 },
+          { header: 'เบอร์โทรศัพท์', key: 'phone_number', width: 15 },
+          { header: 'หัวข้อบิล', key: 'bill_title', width: 30 },
+          { header: 'จำนวนเงิน', key: 'bill_total_price', width: 15 },
+          { header: 'วันที่อนุมัติ', key: 'update_date', width: 20 }
+        ];
+      }
+
+      // Style header row (row 1 in ExcelJS)
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 25;
+
+      // Style only the cells that have headers (not the entire row)
+      headerRow.eachCell({ includeEmpty: false }, (cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4472C4' }
+        };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF000000' } },
+          left: { style: 'thin', color: { argb: 'FF000000' } },
+          bottom: { style: 'thin', color: { argb: 'FF000000' } },
+          right: { style: 'thin', color: { argb: 'FF000000' } }
+        };
+      });
+
+      // Add data rows
+      formattedRows.forEach(row => {
+        // Split member_detail: "999 | 0997966384" -> ["999", "0997966384"]
+        const memberDetailParts = row.member_detail ? row.member_detail.split(' | ') : [];
+        const roomNo = memberDetailParts[0] || '-';
+        const phoneNumber = memberDetailParts[1] || '-';
+
+        // Build row data based on status
+        const rowData = {
+          bill_no: row.bill_no || '-',
+          member_name: row.member_name || '-',
+          room_no: roomNo,
+          phone_number: phoneNumber,
+          bill_title: row.bill_title || '-',
+          bill_total_price: row.bill_total_price || '-',
+          update_date: row.update_date_formatted || '-'
+        };
+
+        // Add remark column if status is rejected
+        if (isRejected) {
+          rowData.remark = row.remark || '-';
+        }
+
+        const excelRow = worksheet.addRow(rowData);
+
+        // Add border to data cells
+        excelRow.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+            left: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+            bottom: { style: 'thin', color: { argb: 'FFD3D3D3' } },
+            right: { style: 'thin', color: { argb: 'FFD3D3D3' } }
+          };
+          cell.alignment = { vertical: 'middle' };
+        });
+      });
+
+      // Generate Excel file buffer
+      const excelBuffer = await workbook.xlsx.writeBuffer();
+
+      // Generate file name with timestamp
+      const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      const fileName = `payment_list_${customer_id}_${timestamp}.xlsx`;
+
+      // Set response headers for file download
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length);
+
+      // Send Excel file
+      return res.send(excelBuffer);
+    }
+
+    // Normal JSON response (if not Excel export)
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION} p
+      LEFT JOIN member_information m ON p.member_id = m.id
+      LEFT JOIN room_information r ON m.room_id = r.id
+      LEFT JOIN bill_room_information br ON p.payable_type = 'bill_room_information' AND p.payable_id = br.id
+      LEFT JOIN bill_information b ON br.bill_id = b.id
+      ${whereClause}
+    `;
+    const [countResult] = await db.execute(countQuery, queryParams);
+    const total = countResult[0].total;
 
     res.json({
       success: true,
