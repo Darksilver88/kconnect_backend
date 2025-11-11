@@ -263,7 +263,7 @@ export const getBillRoomAppList = async (req, res) => {
       SELECT
         br.id, br.bill_id, br.bill_no, br.house_no, br.member_name, br.total_price, br.remark, br.customer_id, br.status,
         br.create_date, br.create_by, br.update_date, br.update_by, br.delete_date, br.delete_by,
-        b.title as bill_title, b.expire_date
+        b.title as bill_title, b.detail as bill_detail, b.expire_date
       FROM ${TABLE_INFORMATION} br
       LEFT JOIN bill_information b ON br.bill_id = b.id
       ${whereClause}
