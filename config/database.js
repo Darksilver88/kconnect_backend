@@ -37,6 +37,11 @@ async function initDatabase() {
 
     pool = mysql.createPool(config);
 
+    // Set timezone for every new connection from pool
+    pool.on('connection', (connection) => {
+      connection.query("SET time_zone = '+07:00'");
+    });
+
     // Test the connection
     const connection = await pool.getConnection();
     logger.info('MySQL connection pool created successfully');
