@@ -23,8 +23,10 @@ async function initDatabase() {
       keepAliveInitialDelay: 0, // Start keep-alive immediately
       // Handle disconnections
       connectTimeout: 10000, // 10 seconds
-      // Timezone (Thailand GMT+7)
-      timezone: '+07:00'
+      // Timezone (Thailand GMT+7) - CRITICAL for Railway MySQL
+      timezone: 'Z', // Use UTC in connection
+      // Add charset
+      charset: 'utf8mb4'
     };
 
     logger.info('Creating MySQL connection pool...', {
@@ -37,14 +39,13 @@ async function initDatabase() {
 
     pool = mysql.createPool(config);
 
-    // Set timezone for every new connection from pool
-    pool.on('connection', (connection) => {
-      connection.query("SET time_zone = '+07:00'");
-    });
-
-    // Test the connection
+    // Test the connection and force SET timezone
     const connection = await pool.getConnection();
-    logger.info('MySQL connection pool created successfully');
+
+    // FORCE timezone to Thailand (GMT+7) - This is the key fix
+    await connection.query("SET time_zone = '+07:00'");
+
+    logger.info('MySQL connection pool created successfully with timezone +07:00');
     connection.release();
 
     return pool;
@@ -64,7 +65,38 @@ function getDatabase() {
   if (!pool) {
     throw new Error('Database pool not initialized. Call initDatabase() first.');
   }
-  return pool;
+
+  // Wrap the pool to automatically set timezone on every query/execute
+  const originalPool = pool;
+
+  // Create a proxy that intercepts execute and query
+  return new Proxy(originalPool, {
+    get(target, prop) {
+      if (prop === 'execute' || prop === 'query') {
+        return async function(...args) {
+          const connection = await target.getConnection();
+          try {
+            // Set timezone for this connection
+            await connection.query("SET time_zone = '+07:00'");
+            // Execute the original query
+            const result = await connection[prop](...args);
+            return result;
+          } finally {
+            connection.release();
+          }
+        };
+      }
+      if (prop === 'getConnection') {
+        return async () => {
+          const connection = await target.getConnection();
+          // Set timezone for this connection
+          await connection.query("SET time_zone = '+07:00'");
+          return connection;
+        };
+      }
+      return target[prop];
+    }
+  });
 }
 
 export { initDatabase, getDatabase };
