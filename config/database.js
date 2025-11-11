@@ -23,8 +23,8 @@ async function initDatabase() {
       keepAliveInitialDelay: 0, // Start keep-alive immediately
       // Handle disconnections
       connectTimeout: 10000, // 10 seconds
-      // Timezone
-      timezone: '+00:00'
+      // Timezone (Thailand GMT+7)
+      timezone: '+07:00'
     };
 
     logger.info('Creating MySQL connection pool...', {
