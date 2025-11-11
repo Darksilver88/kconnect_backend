@@ -1472,7 +1472,7 @@ export const getBillRoomList = async (req, res) => {
 
       // Generate file name with timestamp
       const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const fileName = `bill_room_list_${bill_id}_${timestamp}.xlsx`;
+      const fileName = `bill_room_list_${timestamp}.xlsx`;
 
       // Set response headers for file download
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

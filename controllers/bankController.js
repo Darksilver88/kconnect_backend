@@ -184,7 +184,7 @@ export const getBankList = async (req, res) => {
              create_date, create_by, update_date, update_by, delete_date, delete_by
       FROM ${TABLE_INFORMATION}
       ${whereClause}
-      ORDER BY create_date DESC
+      ORDER BY create_date ASC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
 

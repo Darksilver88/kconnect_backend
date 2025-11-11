@@ -7,6 +7,26 @@ import { generateUploadKey } from '../utils/keyGenerator.js';
 const MENU = 'room';
 const TABLE_INFORMATION = `${MENU}_information`;
 
+// Helper function to normalize bank account type from Firebase
+function normalizeBankType(firebaseType) {
+  if (!firebaseType) return '';
+
+  const type = firebaseType.trim();
+
+  // แปลงจาก "เงินฝากออมทรัพย์" เป็น "ออมทรัพย์"
+  if (type === 'เงินฝากออมทรัพย์') {
+    return 'ออมทรัพย์';
+  }
+
+  // แปลงจาก "เงินฝากประจำ" เป็น "ประจำ"
+  if (type === 'เงินฝากประจำ') {
+    return 'ประจำ';
+  }
+
+  // กระแสรายวัน ไม่ต้องแปลง (ใช้ค่าเดิม)
+  return type;
+}
+
 export const insertRoom = async (req, res) => {
   try {
     const { title, upload_key, type_id, customer_id, owner_id, status, uid } = req.body;
@@ -645,7 +665,7 @@ export const syncFromFirebase = async (req, res) => {
             const bankAccount = bankData.bank_account || '';
             const bankId = bankData.bank_id ? parseInt(bankData.bank_id) : null;
             const bankNo = bankData.bank_no || '';
-            const type = bankData.type || '';
+            const type = normalizeBankType(bankData.type || '');
             const createDate = bankData.create_date;
 
             // Skip if bank_no is empty
