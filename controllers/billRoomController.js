@@ -590,7 +590,7 @@ function getStatusObject(statusId, isOverdue = false) {
  */
 export const getCurrentBillRoom = async (req, res) => {
   try {
-    const { house_no, customer_id } = req.query;
+    let { house_no, customer_id } = req.query;
 
     if (!house_no || !customer_id) {
       return res.status(400).json({
@@ -600,6 +600,9 @@ export const getCurrentBillRoom = async (req, res) => {
         required: ['house_no', 'customer_id']
       });
     }
+
+    // Convert house_no: replace "-" with "/" (e.g., "100-10" -> "100/10")
+    house_no = house_no.replace(/-/g, '/');
 
     const db = getDatabase();
 
