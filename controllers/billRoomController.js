@@ -711,6 +711,29 @@ export const getCurrentBillRoom = async (req, res) => {
       formattedData.remark = rejectedPayment.remark;
     }
 
+    // Get latest payment for this bill_room (any status)
+    const latestPaymentQuery = `
+      SELECT id, remark, update_date
+      FROM payment_information
+      WHERE payable_type = 'bill_room_information'
+        AND payable_id = ?
+      ORDER BY update_date DESC
+      LIMIT 1
+    `;
+    const [latestPaymentRows] = await db.execute(latestPaymentQuery, [row.id]);
+
+    if (latestPaymentRows.length > 0) {
+      const payment = latestPaymentRows[0];
+      formattedData.payment_data = {
+        id: payment.id,
+        remark: payment.remark,
+        update_date: payment.update_date,
+        update_date_formatted: formatDateDDMMYYYY(payment.update_date)
+      };
+    } else {
+      formattedData.payment_data = null;
+    }
+
     res.json({
       success: true,
       data: formattedData,
