@@ -417,6 +417,10 @@ export const getBillRoomDetail = async (req, res) => {
     const row = billRoomRows[0];
     const billRoomData = addFormattedDates(row, ['create_date', 'update_date', 'delete_date', 'expire_date']);
 
+    // Add total_price_formatted
+    const totalPrice = parseFloat(row.total_price);
+    billRoomData.total_price_formatted = `฿${formatNumber(totalPrice)}`;
+
     // Add create_date_app_detail_formatted (short format: "25 มิ.ย. 2025")
     billRoomData.create_date_app_detail_formatted = formatDateForAppShort(row.create_date);
 
@@ -514,12 +518,16 @@ export const getBillRoomDetail = async (req, res) => {
 
     const [paymentRows] = await db.execute(paymentListQuery, [parseInt(id)]);
 
-    // Get master bank list from Firebase
-    const masterBankList = await getMasterBankListData();
+    // If no payments, set paymentList to null
+    let paymentList = null;
 
-    // Process payment list with attachments and bank data
-    const paymentList = await Promise.all(
-      paymentRows.map(async (payment) => {
+    if (paymentRows.length > 0) {
+      // Get master bank list from Firebase
+      const masterBankList = await getMasterBankListData();
+
+      // Process payment list with attachments and bank data
+      paymentList = await Promise.all(
+        paymentRows.map(async (payment) => {
         // Format dates
         const formattedPayment = {
           id: payment.id,
@@ -571,8 +579,9 @@ export const getBillRoomDetail = async (req, res) => {
         }));
 
         return formattedPayment;
-      })
-    );
+        })
+      );
+    }
 
     res.json({
       success: true,
@@ -671,7 +680,7 @@ function calculateRemainDays(expireDate) {
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
   if (diffDays > 0) {
-    return `เหลือเวลา ${diffDays} วัน`;
+    return `เหลือ ${diffDays} วัน`;
   } else if (diffDays === 0) {
     return 'วันนี้';
   } else {
