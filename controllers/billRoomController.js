@@ -1,9 +1,50 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { getFileUrl } from '../utils/storageManager.js';
+import { getFirestore } from '../config/firebase.js';
 
 const MENU = 'bill_room';
 const TABLE_INFORMATION = `${MENU}_information`;
+
+// Helper function to get master bank list from Firebase
+async function getMasterBankListData() {
+  try {
+    const db = getFirestore();
+    const docRef = db.collection('kconnect_config').doc('config').collection('niti_config').doc('config');
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      logger.warn('Master bank list not found in Firebase');
+      return [];
+    }
+
+    const data = doc.data();
+    return data.bank_list || [];
+  } catch (error) {
+    logger.error('Error fetching master bank list:', error);
+    return [];
+  }
+}
+
+// Helper function to enrich bank data with master bank info
+function enrichBankWithMasterData(bank, masterBankList) {
+  if (!bank.bank_id) {
+    return bank;
+  }
+
+  const masterBank = masterBankList.find(b => b.id === bank.bank_id);
+
+  if (masterBank) {
+    return {
+      ...bank,
+      bank_name: masterBank.name,
+      bank_icon: masterBank.icon
+    };
+  }
+
+  return bank;
+}
 
 // Generate bill_no format: INV-YYYY-MMDD-NNN
 async function generateBillNo(db, customer_id) {
@@ -334,7 +375,7 @@ export const getBillRoomDetail = async (req, res) => {
 
     const db = getDatabase();
 
-    // Get bill_room details with bill information
+    // Get bill_room details with bill information and bill_type
     const billRoomQuery = `
       SELECT
         br.id,
@@ -354,9 +395,12 @@ export const getBillRoomDetail = async (req, res) => {
         br.delete_by,
         b.title as bill_title,
         b.detail as bill_detail,
-        b.expire_date
+        b.expire_date,
+        b.bill_type_id,
+        bt.title as bill_type
       FROM ${TABLE_INFORMATION} br
       LEFT JOIN bill_information b ON br.bill_id = b.id
+      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
       WHERE br.id = ? AND br.status != 2
     `;
 
@@ -370,7 +414,29 @@ export const getBillRoomDetail = async (req, res) => {
       });
     }
 
-    const billRoomData = addFormattedDates(billRoomRows[0], ['create_date', 'update_date', 'delete_date', 'expire_date']);
+    const row = billRoomRows[0];
+    const billRoomData = addFormattedDates(row, ['create_date', 'update_date', 'delete_date', 'expire_date']);
+
+    // Add create_date_app_detail_formatted (short format: "25 มิ.ย. 2025")
+    billRoomData.create_date_app_detail_formatted = formatDateForAppShort(row.create_date);
+
+    // Add expire_date_app_detail_formatted (short format: "15 ก.ค. 2025")
+    billRoomData.expire_date_app_detail_formatted = formatDateForAppShort(row.expire_date);
+
+    // Add remain_date
+    billRoomData.remain_date = calculateRemainDays(row.expire_date);
+
+    // Check if overdue for status_formatted
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expireDate = row.expire_date ? new Date(row.expire_date) : null;
+    if (expireDate) {
+      expireDate.setHours(0, 0, 0, 0);
+    }
+    const isOverdue = expireDate ? today > expireDate : false;
+
+    // Add status_formatted (with overdue check)
+    billRoomData.status_formatted = getStatusObject(row.status, isOverdue);
 
     // Get all transactions for this bill_room
     const transactionsQuery = `
@@ -419,11 +485,101 @@ export const getBillRoomDetail = async (req, res) => {
     const totalPrice = parseFloat(billRoomData.total_price);
     const remainingAmount = totalPrice - totalPaid;
 
+    // Get payment list for this bill_room
+    const paymentListQuery = `
+      SELECT
+        p.id,
+        p.member_id,
+        p.create_date,
+        p.update_date,
+        p.payment_date,
+        p.bank_id,
+        p.payment_amount,
+        p.payment_type_id,
+        p.remark,
+        p.upload_key,
+        p.member_remark,
+        m.full_name as member_name,
+        m.house_no,
+        pt.title as payment_type_title,
+        pt.detail as payment_type_detail
+      FROM payment_information p
+      LEFT JOIN member_information m ON p.member_id = m.id
+      LEFT JOIN payment_type_information pt ON p.payment_type_id = pt.id
+      WHERE p.payable_type = 'bill_room_information'
+        AND p.payable_id = ?
+        AND p.status != 2
+      ORDER BY p.update_date DESC
+    `;
+
+    const [paymentRows] = await db.execute(paymentListQuery, [parseInt(id)]);
+
+    // Get master bank list from Firebase
+    const masterBankList = await getMasterBankListData();
+
+    // Process payment list with attachments and bank data
+    const paymentList = await Promise.all(
+      paymentRows.map(async (payment) => {
+        // Format dates
+        const formattedPayment = {
+          id: payment.id,
+          member_id: payment.member_id,
+          member_name: payment.member_name,
+          house_no: payment.house_no,
+          create_date: payment.create_date,
+          update_date: payment.update_date,
+          create_date_app_detail_formatted: `${formatDateDDMMYYYY(payment.create_date)?.split('/').slice(0, 2).join('/')}/${payment.create_date ? new Date(payment.create_date).getFullYear() : ''} ${payment.create_date ? String(new Date(payment.create_date).getHours()).padStart(2, '0') + ':' + String(new Date(payment.create_date).getMinutes()).padStart(2, '0') : ''}`,
+          update_date_app_detail_formatted: `${formatDateDDMMYYYY(payment.update_date)?.split('/').slice(0, 2).join('/')}/${payment.update_date ? new Date(payment.update_date).getFullYear() : ''} ${payment.update_date ? String(new Date(payment.update_date).getHours()).padStart(2, '0') + ':' + String(new Date(payment.update_date).getMinutes()).padStart(2, '0') : ''}`,
+          payment_date: payment.payment_date,
+          payment_date_app_detail_formatted: payment.payment_date ? `${formatDateDDMMYYYY(payment.payment_date)?.split('/').slice(0, 2).join('/')}/${new Date(payment.payment_date).getFullYear()} ${String(new Date(payment.payment_date).getHours()).padStart(2, '0')}:${String(new Date(payment.payment_date).getMinutes()).padStart(2, '0')}` : null,
+          bank_id: payment.bank_id,
+          bank_data: null,
+          payment_amount: `฿${formatNumber(parseFloat(payment.payment_amount))}`,
+          payment_type_id: payment.payment_type_id,
+          payment_type_data: {
+            title: payment.payment_type_title,
+            detail: payment.payment_type_detail
+          },
+          remark: payment.remark,
+          member_remark: payment.member_remark,
+          attachment: []
+        };
+
+        // Enrich bank data if bank_id exists
+        if (payment.bank_id) {
+          const bankData = enrichBankWithMasterData({ bank_id: payment.bank_id }, masterBankList);
+          formattedPayment.bank_data = {
+            bank_id: bankData.bank_id,
+            bank_name: bankData.bank_name || null,
+            bank_icon: bankData.bank_icon || null
+          };
+        }
+
+        // Get attachments for this payment
+        const attachmentQuery = `
+          SELECT id, file_name, file_size, file_ext, file_path, create_date
+          FROM payment_attachment
+          WHERE upload_key = ? AND status != 2
+          ORDER BY create_date DESC
+        `;
+        const [attachments] = await db.execute(attachmentQuery, [payment.upload_key]);
+
+        // Format attachments with URL
+        formattedPayment.attachment = attachments.map(att => ({
+          ...addFormattedDates(att, ['create_date']),
+          file_path: getFileUrl(att.file_path)
+        }));
+
+        return formattedPayment;
+      })
+    );
+
     res.json({
       success: true,
       data: {
         ...billRoomData,
         transactions: formattedTransactions,
+        payment_list: paymentList,
         summary: {
           total_price: totalPrice,
           total_paid: totalPaid,

@@ -10,7 +10,7 @@ const TABLE_INFORMATION = `${MENU}_information`;
 
 export const insertPayment = async (req, res) => {
   try {
-    const { upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, payment_date, bank_id, uid } = req.body;
+    const { upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, member_remark, payment_date, bank_id, uid } = req.body;
 
     if (!upload_key || !payable_type || !payable_id || !payment_amount || !payment_type_id || !customer_id || status === undefined || !member_id || !uid) {
       return res.status(400).json({
@@ -40,8 +40,8 @@ export const insertPayment = async (req, res) => {
     }
 
     const insertQuery = `
-      INSERT INTO ${TABLE_INFORMATION} (upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, payment_date, bank_id, create_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ${TABLE_INFORMATION} (upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, member_remark, payment_date, bank_id, create_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const payableIdValue = parseInt(payable_id);
@@ -59,6 +59,7 @@ export const insertPayment = async (req, res) => {
       status,
       memberIdValue,
       remark?.trim() || null,
+      member_remark?.trim() || null,
       payment_date || null,
       bank_id ? parseInt(bank_id) : null,
       uid
@@ -94,6 +95,7 @@ export const insertPayment = async (req, res) => {
         status,
         member_id: memberIdValue,
         remark,
+        member_remark,
         payment_date: payment_date || null,
         bank_id: bank_id ? parseInt(bank_id) : null,
         create_by: uid
