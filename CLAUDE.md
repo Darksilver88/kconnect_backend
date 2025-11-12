@@ -373,7 +373,10 @@ MySQL connection configured via .env file:
 - `customer_id` - VARCHAR(255) NOT NULL
 - `status` - INT NOT NULL DEFAULT 1 (0=Pending approval, 1=Approved, 2=Deleted, 3=Rejected)
 - `member_id` - INT NOT NULL
-- `remark` - TEXT NULL
+- `remark` - TEXT NULL (admin/staff remarks for internal use)
+- `member_remark` - TEXT NULL (member's note/comment when submitting payment)
+- `payment_date` - TIMESTAMP NULL (actual payment date from member)
+- `bank_id` - INT NULL (bank ID from master bank list)
 - `create_date` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 - `create_by` - INT NOT NULL
 - `update_date` - TIMESTAMP NULL
@@ -588,11 +591,42 @@ MySQL connection configured via .env file:
   - Required: customer_id
   - Optional: page, limit, status, keyword, bill_id
   - Response includes: remark field
+- **App List**: `?page=1&limit=10&customer_id=xxx&house_no=xxx&status=1` via `/api/bill_room/app_list`
+  - Required: customer_id, house_no
+  - Optional: page, limit, status (default: 1,5 = ชำระแล้ว + รอตรวจสอบ)
+  - Returns bill list with bill_detail field from bill_information.detail
+  - Response includes: bill_no, bill_title, bill_detail, expire_date, total_price, status (dynamic overdue check)
+  - Dynamic status: If status=0 and current_date > expire_date, returns status=3 (overdue)
+- **Detail**: `/api/bill_room/{id}` - Get single bill room detail by ID
+  - Returns comprehensive bill room information with:
+    - Basic fields: bill_no, house_no, member_name, total_price, total_price_formatted (฿2,000), status, status_formatted
+    - Bill information: bill_id, bill_title, bill_type (from bill_type_information.title), detail
+    - Date fields with multiple formats:
+      - create_date, update_date (DD/MM/YYYY HH:mm:ss)
+      - create_date_app_detail_formatted, expire_date_app_detail_formatted (25 มิ.ย. 2025)
+      - remain_date: "เหลือ 16 วัน" or "เกิน 1 วัน" or "วันนี้"
+    - payment_list: Array of payment records with:
+      - Payment info: id, member_id, member_name, house_no, payment_amount (formatted with ฿)
+      - Payment type: payment_type_title, payment_type_detail
+      - Bank info: bank_id, bank_name, bank_icon (enriched from Firebase master bank list)
+      - Dates: payment_date, create_date (DD/MM/YYYY), update_date (DD/MM/YYYY HH:mm)
+      - Remarks: remark, member_remark
+      - Attachments: attachment_list (array of files with file_url)
+      - Returns null if no payments exist
+    - Summary: total_price (sum of bill_room.total_price)
+- **Current Bill Room**: `?house_no=xxx&customer_id=xxx` via `/api/bill_room/current_bill_room`
+  - Required: house_no, customer_id
+  - Optional: status (default: 1 = sent bills only)
+  - Returns current/latest bill for specific room
+  - Response includes:
+    - payment_data: Latest payment information with id, remark, update_date, update_date_formatted (DD/MM/YYYY)
+    - Returns payment_data: null if no payment exists
+  - Note: house_no parameter supports "-" to "/" conversion (e.g., "100-10" → "100/10")
 
 **Payment API:**
-- **Insert**: `{upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, uid, remark?}` via `/api/payment/insert`
+- **Insert**: `{upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, uid, remark?, member_remark?, payment_date?, bank_id?}` via `/api/payment/insert`
   - Required: upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, uid
-  - Optional: remark
+  - Optional: remark (admin/staff remarks), member_remark (member's note), payment_date (actual payment date), bank_id (bank ID from master bank list)
   - payment_amount is DOUBLE type
   - Uses Polymorphic Association: payable_type + payable_id (e.g., payable_type='bill_room_information', payable_id=19)
   - Validation: Checks if payment_attachment exists with status=1 before insert (requires payment slip)

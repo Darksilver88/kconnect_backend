@@ -494,6 +494,7 @@ export const getBillRoomDetail = async (req, res) => {
       SELECT
         p.id,
         p.member_id,
+        p.status,
         p.create_date,
         p.update_date,
         p.payment_date,
@@ -518,8 +519,8 @@ export const getBillRoomDetail = async (req, res) => {
 
     const [paymentRows] = await db.execute(paymentListQuery, [parseInt(id)]);
 
-    // If no payments, set paymentList to null
-    let paymentList = null;
+    // If no payments, set paymentList to empty array
+    let paymentList = [];
 
     if (paymentRows.length > 0) {
       // Get master bank list from Firebase
@@ -532,6 +533,7 @@ export const getBillRoomDetail = async (req, res) => {
         const formattedPayment = {
           id: payment.id,
           member_id: payment.member_id,
+          status: payment.status,
           member_name: payment.member_name,
           house_no: payment.house_no,
           create_date: payment.create_date,
