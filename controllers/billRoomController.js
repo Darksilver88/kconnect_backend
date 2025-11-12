@@ -486,8 +486,8 @@ export const getBillRoomDetail = async (req, res) => {
 
     // Calculate totals
     const totalPaid = transactionRows.reduce((sum, tx) => sum + parseFloat(tx.transaction_amount), 0);
-    const totalPrice = parseFloat(billRoomData.total_price);
-    const remainingAmount = totalPrice - totalPaid;
+    const billTotalPrice = parseFloat(billRoomData.total_price);
+    const remainingAmount = billTotalPrice - totalPaid;
 
     // Get payment list for this bill_room
     const paymentListQuery = `
@@ -590,7 +590,7 @@ export const getBillRoomDetail = async (req, res) => {
         transactions: formattedTransactions,
         payment_list: paymentList,
         summary: {
-          total_price: totalPrice,
+          total_price: billTotalPrice,
           total_paid: totalPaid,
           remaining_amount: remainingAmount,
           transaction_count: transactionRows.length,
