@@ -26,7 +26,9 @@ async function initDatabase() {
       // Timezone (Thailand GMT+7)
       timezone: '+07:00',
       // Add charset
-      charset: 'utf8mb4'
+      charset: 'utf8mb4',
+      // Return dates as strings instead of Date objects to prevent timezone conversion
+      dateStrings: true
     };
 
     logger.info('Creating MySQL connection pool...', {

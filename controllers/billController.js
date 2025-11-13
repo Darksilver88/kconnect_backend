@@ -105,12 +105,9 @@ export const insertBill = async (req, res) => {
 
     const db = getDatabase();
 
-    // Adjust expire_date time to 23:59:59 (UTC timezone)
+    // Adjust expire_date time to 23:59:59 (Local timezone GMT+7)
     const expireDateObj = new Date(expire_date);
-    expireDateObj.setUTCHours(23);
-    expireDateObj.setUTCMinutes(59);
-    expireDateObj.setUTCSeconds(59);
-    expireDateObj.setUTCMilliseconds(0);
+    expireDateObj.setHours(23, 59, 59, 0);
 
     // For send_date: use NOW() if status is 1, otherwise NULL
     const sendDateValue = parseInt(status) === 1 ? 'NOW()' : 'NULL';
@@ -284,12 +281,9 @@ export const updateBill = async (req, res) => {
         sendDateUpdate = ', send_date = NOW()';
       }
 
-      // Adjust expire_date time to 23:59:59 (UTC timezone)
+      // Adjust expire_date time to 23:59:59 (Local timezone GMT+7)
       const expireDateObj = new Date(expire_date);
-      expireDateObj.setUTCHours(23);
-      expireDateObj.setUTCMinutes(59);
-      expireDateObj.setUTCSeconds(59);
-      expireDateObj.setUTCMilliseconds(0);
+      expireDateObj.setHours(23, 59, 59, 0);
 
       const updateQuery = `
         UPDATE ${TABLE_INFORMATION}
@@ -961,12 +955,9 @@ export const insertBillWithExcel = async (req, res) => {
       const generatedBillNo = `BILL-${year}-${datePrefix}-${String(billRunNumber).padStart(3, '0')}`;
 
       // Step 8: Insert bill_information
-      // Adjust expire_date time to 23:59:59 (UTC timezone)
+      // Adjust expire_date time to 23:59:59 (Local timezone GMT+7)
       const expireDateObj = new Date(expire_date);
-      expireDateObj.setUTCHours(23);
-      expireDateObj.setUTCMinutes(59);
-      expireDateObj.setUTCSeconds(59);
-      expireDateObj.setUTCMilliseconds(0);
+      expireDateObj.setHours(23, 59, 59, 0);
 
       // For send_date: use NOW() if status is 1, otherwise NULL
       const sendDateValue = parseInt(status) === 1 ? 'NOW()' : 'NULL';
