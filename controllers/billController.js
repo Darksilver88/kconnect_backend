@@ -18,6 +18,28 @@ const TABLE_ATTACHMENT = `${MENU}_attachment`;
 const TABLE_AUDIT = `${MENU}_audit_information`;
 
 /**
+ * Helper function to format expire_date to end of day (23:59:59)
+ * @param {string|Date} dateInput - Date input (can be string or Date object)
+ * @returns {string} Formatted date string in YYYY-MM-DD HH:mm:ss format
+ */
+function formatExpireDate(dateInput) {
+  const d = new Date(dateInput);
+
+  // Set to end of day (23:59:59)
+  d.setHours(23, 59, 59, 0);
+
+  // Format to MySQL datetime format: YYYY-MM-DD HH:mm:ss
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+/**
  * Helper function to insert bill audit log
  * @param {Object} db - Database connection
  * @param {number} billId - Bill ID
@@ -105,9 +127,8 @@ export const insertBill = async (req, res) => {
 
     const db = getDatabase();
 
-    // Adjust expire_date time to 23:59:59 (Local timezone GMT+7)
-    const expireDateObj = new Date(expire_date);
-    expireDateObj.setHours(23, 59, 59, 0);
+    // Format expire_date to end of day (23:59:59) in local timezone GMT+7
+    const formattedExpireDate = formatExpireDate(expire_date);
 
     // For send_date: use NOW() if status is 1, otherwise NULL
     const sendDateValue = parseInt(status) === 1 ? 'NOW()' : 'NULL';
@@ -124,7 +145,7 @@ export const insertBill = async (req, res) => {
       title?.trim(),
       billTypeIdValue,
       detail?.trim(),
-      expireDateObj,
+      formattedExpireDate,
       // sendDate removed - using NOW() or NULL directly in query
       remark?.trim() || null,
       customer_id?.trim(),
@@ -281,9 +302,8 @@ export const updateBill = async (req, res) => {
         sendDateUpdate = ', send_date = NOW()';
       }
 
-      // Adjust expire_date time to 23:59:59 (Local timezone GMT+7)
-      const expireDateObj = new Date(expire_date);
-      expireDateObj.setHours(23, 59, 59, 0);
+      // Format expire_date to end of day (23:59:59) in local timezone GMT+7
+      const formattedExpireDate = formatExpireDate(expire_date);
 
       const updateQuery = `
         UPDATE ${TABLE_INFORMATION}
@@ -295,7 +315,7 @@ export const updateBill = async (req, res) => {
         title?.trim(),
         parseInt(bill_type_id),
         detail?.trim(),
-        expireDateObj,
+        formattedExpireDate,
         remark?.trim() || null,
         status,
         uid,
@@ -955,9 +975,8 @@ export const insertBillWithExcel = async (req, res) => {
       const generatedBillNo = `BILL-${year}-${datePrefix}-${String(billRunNumber).padStart(3, '0')}`;
 
       // Step 8: Insert bill_information
-      // Adjust expire_date time to 23:59:59 (Local timezone GMT+7)
-      const expireDateObj = new Date(expire_date);
-      expireDateObj.setHours(23, 59, 59, 0);
+      // Format expire_date to end of day (23:59:59) in local timezone GMT+7
+      const formattedExpireDate = formatExpireDate(expire_date);
 
       // For send_date: use NOW() if status is 1, otherwise NULL
       const sendDateValue = parseInt(status) === 1 ? 'NOW()' : 'NULL';
@@ -975,7 +994,7 @@ export const insertBillWithExcel = async (req, res) => {
         title?.trim(),
         billTypeIdValue,
         detail?.trim(),
-        expireDateObj,
+        formattedExpireDate,
         // sendDate removed - using NOW() or NULL directly in query
         customer_id?.trim(),
         status,
