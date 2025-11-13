@@ -648,9 +648,9 @@ function formatDateForApp(date) {
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
 
-  const day = d.getUTCDate();
-  const month = getThaiMonthName(d.getUTCMonth());
-  const year = d.getUTCFullYear() + 543;
+  const day = d.getDate();
+  const month = getThaiMonthName(d.getMonth());
+  const year = d.getFullYear() + 543;
 
   return `${day} ${month} ${year}`;
 }
@@ -661,9 +661,9 @@ function formatDateForAppShort(date) {
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
 
-  const day = d.getUTCDate();
-  const month = getThaiMonthNameShort(d.getUTCMonth());
-  const year = d.getUTCFullYear(); // ใช้ ค.ศ. ไม่บวก 543
+  const day = d.getDate();
+  const month = getThaiMonthNameShort(d.getMonth());
+  const year = d.getFullYear(); // ใช้ ค.ศ. ไม่บวก 543
 
   return `${day} ${month} ${year}`;
 }
@@ -696,9 +696,9 @@ function formatDateDDMMYYYY(date) {
   const d = new Date(date);
   if (isNaN(d.getTime())) return null;
 
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const year = d.getUTCFullYear();
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
 
   return `${day}/${month}/${year}`;
 }
