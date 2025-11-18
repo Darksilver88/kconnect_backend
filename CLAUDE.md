@@ -41,6 +41,7 @@ kconnect_backend/
 │   └── database.js        # Database connection & config
 ├── routes/
 │   ├── index.js          # Main API router
+│   ├── auth.js           # Authentication routes
 │   ├── testData.js       # Test data routes
 │   ├── news.js           # News routes
 │   ├── room.js           # Room routes
@@ -54,6 +55,7 @@ kconnect_backend/
 │   └── dashboard.js      # Dashboard routes
 ├── controllers/
 │   ├── testDataController.js  # Test data & table creation
+│   ├── authController.js      # Authentication business logic
 │   ├── newsController.js      # News business logic
 │   ├── uploadController.js    # File upload business logic
 │   ├── roomController.js      # Room business logic
@@ -66,6 +68,7 @@ kconnect_backend/
 │   ├── paymentTypeController.js # Payment Type business logic
 │   └── dashboardController.js # Dashboard business logic
 ├── middleware/
+│   ├── auth.js           # JWT authentication & authorization middleware
 │   ├── errorHandler.js   # Error handling middleware
 │   └── logger.js         # Request logging middleware
 ├── utils/
@@ -91,6 +94,7 @@ MySQL connection configured via .env file:
 - `PORT` - Server port (default: 3000, Railway auto-assigns port in production)
 - `NODE_ENV` - Environment mode (development/production)
 - `DOMAIN` - Base URL for file paths (default: http://localhost:3000)
+- `PORTAL_API_URL` - Portal SSO API base URL for authentication (e.g., https://portal-api.example.com)
 
 **Connection Pattern**: Single MySQL connection created on startup via `mysql2/promise`
 
@@ -108,6 +112,11 @@ MySQL connection configured via .env file:
 - `GET /` - Root endpoint returning API information and available endpoints
 - `GET /health` - Health check endpoint
 - `GET /api/test` - Test endpoint returning API status and timestamp
+
+### Authentication API
+- `POST /api/auth/login` - Login via Portal SSO (returns JWT token)
+- `GET /api/auth/verify` - Verify JWT token validity (requires authentication)
+- `GET /api/auth/customer_list` - Get list of customers user can access (requires authentication)
 
 ### Test Data & Table Creation
 - `GET /api/test-data/insert_data` - Insert random data into test_list table
@@ -1320,3 +1329,200 @@ const snapshot = await db.collection('customer').where('code', '==', 'CUST001').
 6. Insert/Update room_information using (title + customer_id) as unique key
 7. Insert/Update member_information using member_ref as unique key
 8. Update room owner_id based on member with user_level='owner'
+
+## Authentication & Authorization
+
+**Authentication System**: Portal SSO (Single Sign-On) with JWT tokens
+**Authorization**: Customer access verification based on Portal permissions
+
+### Overview
+
+KConnect API uses Portal SSO for authentication. Users log in through Portal system and receive a JWT token, which is then used to authenticate all API requests.
+
+**Key Features**:
+- No user table in KConnect database (uses JWT + Portal API)
+- Stateless JWT authentication (no session storage required)
+- Customer access control via Portal `allow_sites` API
+- All protected APIs require JWT + customer_id verification
+
+### Authentication Flow
+
+```
+1. User logs in via Portal
+   ↓
+2. Frontend: POST /api/auth/login { username, password }
+   ↓
+3. KConnect forwards to Portal API
+   ↓
+4. Portal validates credentials → returns JWT
+   ↓
+5. KConnect returns JWT to frontend
+   ↓
+6. Frontend stores JWT (localStorage/sessionStorage)
+   ↓
+7. Frontend calls protected APIs with:
+   - Header: Authorization: Bearer <JWT>
+   - Parameter: customer_id
+   ↓
+8. KConnect middleware:
+   - Verifies JWT validity
+   - Checks customer access permission via Portal allow_sites API
+   - Allows/Denies request
+```
+
+### Middleware Components
+
+**1. authenticateJWT** (`middleware/auth.js`)
+- Validates JWT token from Authorization header
+- Decodes JWT to extract user info (uid, email, displayName)
+- Checks token expiration
+- Attaches user info to `req.user`
+
+**2. verifyCustomerAccess** (`middleware/auth.js`)
+- Extracts `customer_id` from query or body
+- Calls Portal `/api/allow_sites` with JWT
+- Verifies user has access to requested customer
+- Returns 403 Forbidden if access denied
+
+### Protected Routes
+
+All routes except `/api/auth/login` and `/api/test` require authentication:
+
+```javascript
+// All routes in these files are protected:
+routes/bill.js
+routes/billRoom.js
+routes/billTransaction.js
+routes/payment.js
+routes/paymentType.js
+routes/billType.js
+routes/dashboard.js
+routes/member.js
+routes/room.js
+routes/news.js
+routes/bank.js
+routes/appCustomerConfig.js
+```
+
+### API Request Format
+
+**Login Request**:
+```bash
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "username": "user@example.com",
+  "password": "password123"
+}
+```
+
+**Login Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "uid": "abc123",
+      "email": "user@example.com",
+      "displayName": "John Doe",
+      "phoneNumber": "0812345678"
+    }
+  },
+  "message": "เข้าสู่ระบบสำเร็จ"
+}
+```
+
+**Protected API Request**:
+```bash
+GET /api/bill/list?page=1&limit=10&customer_id=191
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+### Error Responses
+
+**401 Unauthorized** (Missing/Invalid JWT):
+```json
+{
+  "success": false,
+  "error": "Missing or invalid authorization header",
+  "message": "กรุณา Login เข้าสู่ระบบ"
+}
+```
+
+**401 Unauthorized** (Expired JWT):
+```json
+{
+  "success": false,
+  "error": "Token expired",
+  "message": "Token หมดอายุ กรุณา Login ใหม่"
+}
+```
+
+**403 Forbidden** (No customer access):
+```json
+{
+  "success": false,
+  "error": "Access denied",
+  "message": "คุณไม่มีสิทธิ์เข้าถึงข้อมูลของลูกค้ารายนี้"
+}
+```
+
+### Implementation Details
+
+**No User Table**:
+- User data comes from JWT (decoded on each request)
+- No database storage needed for user sessions
+- User info available in `req.user` after authentication
+
+**Customer ID Parameter**:
+- All APIs continue to receive `customer_id` via query/body
+- No changes to controller or business logic required
+- Middleware validates customer access before controller execution
+
+**Portal Integration**:
+- Portal API URL configured via `PORTAL_API_URL` environment variable (default: https://dev-portal.koder3.com)
+- Two Portal endpoints used:
+  - `POST /api/login` - Authenticate user, get JWT
+  - `GET /api/user/{userId}/{userLevel}/allow_sites` - Get list of allowed sites/customers
+- Firebase integration to map customer names to customer codes
+
+**JWT Structure** (Portal format with values object):
+```json
+{
+  "iat": 1762930303,
+  "jti": "N2Q5YTNkYjQtZGI1OS00OTA5LWE2YzMtOGFhZDUwM2FlMGNk",
+  "iss": "guard3",
+  "nbf": 1762930303,
+  "exp": 1762930903,
+  "values": {
+    "username": "user@example.com",
+    "userid": "11",
+    "parentuserid": "",
+    "userlevel": 3,
+    "userprimarykey": 11,
+    "permission": false
+  }
+}
+```
+
+**Customer Mapping Process**:
+1. Call Portal `/api/user/{userId}/{userLevel}/allow_sites` → get sites with `k_product_customer_name`
+2. Query Firebase `customer` collection WHERE `name` = `k_product_customer_name`
+3. Extract `customer_code` field → this is the `customer_id` used in KConnect APIs
+
+### Security Considerations
+
+- JWT tokens should be short-lived (recommended: 1-24 hours)
+- Frontend should handle token refresh (via Portal)
+- HTTPS required in production to protect JWT in transit
+- JWT stored in httpOnly cookies (recommended) or localStorage
+- Customer access verified on every request (no caching)
+
+### Development Notes
+
+- **Backward Compatible**: Existing APIs unchanged, only middleware added
+- **Minimal Impact**: No controller modifications required
+- **Easy Testing**: Can test protected APIs with Portal JWT in Postman
+- **Logging**: All auth attempts logged via Winston logger

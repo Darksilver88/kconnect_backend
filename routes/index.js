@@ -1,6 +1,7 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { uploadFiles, deleteFile } from '../controllers/uploadController.js';
+import authRoutes from './auth.js';
 import testDataRoutes from './testData.js';
 import newsRoutes from './news.js';
 import roomRoutes from './room.js';
@@ -23,6 +24,9 @@ router.get('/test', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Public routes (no authentication required)
+router.use('/auth', authRoutes);
 
 // File upload/delete endpoints
 router.post('/upload_file', upload.array('files'), uploadFiles);

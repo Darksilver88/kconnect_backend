@@ -1,8 +1,13 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { insertBill, updateBill, sendBill, cancelSendBill, deleteBill, getBillDetail, getBillList, insertBillWithExcel, getBillExcelList, getBillRoomList, getBillRoomEachList, getBillRoomPendingList, getBillStatus, getSummaryData, sendNotificationEach } from '../controllers/billController.js';
+import { authenticateJWT, verifyCustomerAccess } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Apply authentication middleware to all routes
+router.use(authenticateJWT);
+router.use(verifyCustomerAccess);
 
 // Bill routes
 router.post('/insert', upload.none(), insertBill);

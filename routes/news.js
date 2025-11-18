@@ -1,8 +1,13 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { insertNews, updateNews, deleteNews, getNewsList, getNewsById, insertCategory, updateCategory, deleteCategory, getCategoryList } from '../controllers/newsController.js';
+import { authenticateJWT, verifyCustomerAccess } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Apply authentication middleware to all routes
+router.use(authenticateJWT);
+router.use(verifyCustomerAccess);
 
 // News routes
 router.post('/insert', upload.none(), insertNews);
