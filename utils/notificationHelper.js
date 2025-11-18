@@ -1,4 +1,28 @@
 import logger from './logger.js';
+import { getCustomerNameByCode, batchInsertNotificationsToFirebase } from './firebaseNotificationHelper.js';
+
+/**
+ * Format date to Thai format (e.g., "12 ธันวาคม 2025")
+ * @param {Date|string} date - Date to format
+ * @returns {string} - Formatted date in Thai
+ */
+function formatThaiDate(date) {
+  if (!date) return '';
+
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+
+  const thaiMonths = [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  ];
+
+  const day = d.getDate();
+  const month = thaiMonths[d.getMonth()];
+  const year = d.getFullYear() + 543; // Convert to Buddhist Era
+
+  return `${day} ${month} ${year}`;
+}
 
 /**
  * Insert notification audit records for multiple rows
@@ -8,12 +32,12 @@ import logger from './logger.js';
  * @param {string} customerId - Customer ID
  * @param {number} userId - User ID who triggered the notification
  * @param {Object} options - Optional fields: { remark, title, detail, topic, type, receiver }
- * @returns {Promise<number>} - Number of records inserted
+ * @returns {Promise<{insertedCount: number, notificationData: Object}>} - Number of records inserted and notification data for Firebase
  */
 export async function insertNotificationAudit(db, tableName, rowsIds, customerId, userId, options = {}) {
   if (!rowsIds || rowsIds.length === 0) {
     logger.debug(`No rows provided for notification audit (table: ${tableName})`);
-    return 0;
+    return { insertedCount: 0, notificationsForFirebase: [] };
   }
 
   const { remark = null, title = null, detail = null, topic = null, type = null, receiver = null } = options;
@@ -26,9 +50,10 @@ export async function insertNotificationAudit(db, tableName, rowsIds, customerId
   `;
 
   let insertedCount = 0;
+  const notificationsForFirebase = [];
 
   for (const rowId of rowsIds) {
-    await db.execute(insertQuery, [
+    const [result] = await db.execute(insertQuery, [
       tableName,
       rowId,
       title,
@@ -41,10 +66,30 @@ export async function insertNotificationAudit(db, tableName, rowsIds, customerId
       userId
     ]);
     insertedCount++;
+
+    // Collect notification data for Firebase batch insert
+    // Note: create_date will be NOW() in MySQL, we'll use current timestamp
+    notificationsForFirebase.push({
+      table_name: tableName,
+      rows_id: rowId,
+      title,
+      detail,
+      topic,
+      type,
+      receiver,
+      customer_id: customerId,
+      remark,
+      create_date: new Date() // Use current timestamp for Firebase
+    });
   }
 
   logger.info(`Notification audit inserted: ${insertedCount} records for ${tableName} (customer_id=${customerId})`);
-  return insertedCount;
+
+  // Return both count and notification data for Firebase
+  return {
+    insertedCount,
+    notificationsForFirebase
+  };
 }
 
 /**
@@ -53,12 +98,22 @@ export async function insertNotificationAudit(db, tableName, rowsIds, customerId
  * @param {number} billIdOrBillRoomId - Bill ID or Bill Room ID (depends on options.mode)
  * @param {string} customerId - Customer ID
  * @param {number} userId - User ID
+ * @param {string} billTitle - Bill title from bill_information
+ * @param {string} billDetail - Bill detail from bill_information
+ * @param {Date|string} billExpireDate - Bill expire date from bill_information
  * @param {string|null} remark - Optional remark (for backward compatibility)
  * @param {Object} options - Optional fields: { mode: 'bill' | 'bill_room' }
  * @returns {Promise<number>} - Number of records inserted
  */
-export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, customerId, userId, remark = null, options = {}) {
+export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, customerId, userId, billTitle, billDetail, billExpireDate, remark = null, options = {}) {
   const { mode = 'bill' } = options;
+
+  // Step 1: Query customer name from Firebase
+  const customerName = await getCustomerNameByCode(customerId);
+  if (!customerName) {
+    logger.error(`Cannot insert notification to Firebase: customer not found for customer_id=${customerId}`);
+    // Continue with MySQL insert, but skip Firebase
+  }
 
   // Get all bill_room_information
   let billRoomQuery;
@@ -90,10 +145,20 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
   }
 
   let insertedCount = 0;
+  const allNotificationsForFirebase = []; // Collect all notifications for batch insert
 
-  // Hardcoded notification values
-  const title = "แจ้งเตือนบิล";
-  const detail = "กรุณาชำระบิล";
+  // Notification values from bill_information
+  const title = billTitle || "แจ้งเตือนบิล";       // Use bill title or fallback
+
+  // Combine detail with expire_date in Thai format
+  let detail = billDetail || "กรุณาชำระบิล";
+  if (billExpireDate) {
+    const formattedExpireDate = formatThaiDate(billExpireDate);
+    if (formattedExpireDate) {
+      detail = `${detail} ครบกำหนด: ${formattedExpireDate}`;
+    }
+  }
+
   const topic = "billing";
   const type = "billing";
 
@@ -141,10 +206,33 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
       receiver
     };
 
-    await insertNotificationAudit(db, 'bill_room_information', [billRoom.id], billRoom.customer_id, userId, fullOptions);
-    insertedCount++;
+    const result = await insertNotificationAudit(db, 'bill_room_information', [billRoom.id], billRoom.customer_id, userId, fullOptions);
+
+    // Handle both old return format (number) and new return format (object)
+    if (typeof result === 'object' && result.insertedCount) {
+      insertedCount += result.insertedCount;
+      if (result.notificationsForFirebase) {
+        allNotificationsForFirebase.push(...result.notificationsForFirebase);
+      }
+    } else if (typeof result === 'number') {
+      insertedCount += result;
+    }
   }
 
   logger.info(`Notification audit inserted: ${insertedCount} records for ${mode === 'bill_room' ? 'bill_room_id' : 'bill_id'}=${billIdOrBillRoomId} (customer_id=${customerId})`);
+
+  // Step 2: Batch insert to Firebase (only if we have customer name and notifications)
+  if (customerName && allNotificationsForFirebase.length > 0) {
+    try {
+      const firebaseResult = await batchInsertNotificationsToFirebase(allNotificationsForFirebase, customerName);
+      logger.info(`Firebase batch insert completed: ${firebaseResult.success} success, ${firebaseResult.failed} failed`);
+    } catch (firebaseError) {
+      // Log error but don't fail the MySQL operation
+      logger.error('Firebase batch insert failed:', firebaseError);
+    }
+  } else if (!customerName) {
+    logger.warn(`Skipping Firebase insert: customer name not found for customer_id=${customerId}`);
+  }
+
   return insertedCount;
 }

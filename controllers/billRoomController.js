@@ -296,7 +296,10 @@ export const getBillRoomAppList = async (req, res) => {
     whereClause += ' AND br.customer_id = ?';
     queryParams.push(customer_id);
 
-    const countQuery = `SELECT COUNT(*) as total FROM ${TABLE_INFORMATION} br ${whereClause}`;
+    // Bill information status filter (only sent bills: status = 1)
+    whereClause += ' AND b.status = 1';
+
+    const countQuery = `SELECT COUNT(*) as total FROM ${TABLE_INFORMATION} br INNER JOIN bill_information b ON br.bill_id = b.id ${whereClause}`;
     const [countResult] = await db.execute(countQuery, queryParams);
     const total = countResult[0].total;
 
@@ -306,9 +309,9 @@ export const getBillRoomAppList = async (req, res) => {
         br.create_date, br.create_by, br.update_date, br.update_by, br.delete_date, br.delete_by,
         b.title as bill_title, b.detail as bill_detail, b.expire_date
       FROM ${TABLE_INFORMATION} br
-      LEFT JOIN bill_information b ON br.bill_id = b.id
+      INNER JOIN bill_information b ON br.bill_id = b.id
       ${whereClause}
-      ORDER BY br.create_date DESC
+      ORDER BY b.expire_date DESC, br.id DESC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
 
@@ -784,8 +787,8 @@ export const getCurrentBillRoom = async (req, res) => {
       FROM ${TABLE_INFORMATION} br
       LEFT JOIN bill_information b ON br.bill_id = b.id
       LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
-      WHERE br.house_no = ? AND br.customer_id = ? AND br.status = 0 AND br.status != 2
-      ORDER BY br.create_date ASC
+      WHERE br.house_no = ? AND br.customer_id = ? AND br.status = 0 AND br.status != 2 AND b.status = 1
+      ORDER BY b.expire_date ASC, br.id ASC
       LIMIT 1
     `;
 
@@ -814,26 +817,6 @@ export const getCurrentBillRoom = async (req, res) => {
     `;
     const [paymentRows] = await db.execute(paymentQuery, [row.id]);
     const rejectedPayment = paymentRows.length > 0 ? paymentRows[0] : null;
-
-    // Get last_bill_room (last paid bill with status=1, ordered by update_date DESC)
-    const lastBillQuery = `
-      SELECT total_price
-      FROM ${TABLE_INFORMATION}
-      WHERE house_no = ? AND customer_id = ? AND status = 1 AND status != 2
-      ORDER BY update_date DESC
-      LIMIT 1
-    `;
-    const [lastBillRows] = await db.execute(lastBillQuery, [house_no, customer_id]);
-    const lastBillPrice = lastBillRows.length > 0 ? parseFloat(lastBillRows[0].total_price) : 0;
-
-    // Get total_bill_room (count all bills for this house_no and customer_id)
-    const totalCountQuery = `
-      SELECT COUNT(*) as total
-      FROM ${TABLE_INFORMATION}
-      WHERE house_no = ? AND customer_id = ? AND status != 2
-    `;
-    const [totalCountRows] = await db.execute(totalCountQuery, [house_no, customer_id]);
-    const totalBillRoom = totalCountRows[0].total;
 
     // Add formatted dates
     const formattedData = addFormattedDates(row, ['create_date', 'update_date', 'delete_date', 'expire_date']);
@@ -865,12 +848,6 @@ export const getCurrentBillRoom = async (req, res) => {
 
     // Add create_date_app_formatted (short format: "25 มิ.ย. 2025")
     formattedData.create_date_app_formatted = formatDateForAppShort(row.create_date);
-
-    // Add last_bill_room (formatted)
-    formattedData.last_bill_room = lastBillPrice > 0 ? `฿${formatNumber(lastBillPrice)}` : '฿0';
-
-    // Add total_bill_room (count)
-    formattedData.total_bill_room = totalBillRoom;
 
     // Add rejected payment information if exists
     if (rejectedPayment) {
@@ -913,6 +890,145 @@ export const getCurrentBillRoom = async (req, res) => {
       success: false,
       error: 'Failed to fetch current bill room',
       message: 'เกิดข้อผิดพลาดในการดึงข้อมูลบิลปัจจุบัน',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Get bill room history for mobile app
+ * GET /api/bill_room/history?house_no=xxx&customer_id=xxx
+ * Returns last_bill_room and total_bill_room
+ */
+export const getBillRoomHistory = async (req, res) => {
+  try {
+    let { house_no, customer_id } = req.query;
+
+    if (!house_no || !customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters',
+        message: 'กรุณาระบุ house_no และ customer_id',
+        required: ['house_no', 'customer_id']
+      });
+    }
+
+    // Convert house_no: replace "-" with "/" (e.g., "100-10" -> "100/10")
+    house_no = house_no.replace(/-/g, '/');
+
+    const db = getDatabase();
+
+    // Get last_bill_room (last paid bill with status=1, ordered by update_date DESC)
+    const lastBillQuery = `
+      SELECT br.total_price
+      FROM ${TABLE_INFORMATION} br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.house_no = ? AND br.customer_id = ? AND br.status = 1 AND br.status != 2 AND b.status = 1
+      ORDER BY br.update_date DESC
+      LIMIT 1
+    `;
+    const [lastBillRows] = await db.execute(lastBillQuery, [house_no, customer_id]);
+    const lastBillPrice = lastBillRows.length > 0 ? parseFloat(lastBillRows[0].total_price) : 0;
+
+    // Get total_bill_room (count all bills for this house_no and customer_id)
+    const totalCountQuery = `
+      SELECT COUNT(*) as total
+      FROM ${TABLE_INFORMATION} br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.house_no = ? AND br.customer_id = ? AND br.status != 2 AND b.status = 1
+    `;
+    const [totalCountRows] = await db.execute(totalCountQuery, [house_no, customer_id]);
+    const totalBillRoom = totalCountRows[0].total;
+
+    res.json({
+      success: true,
+      data: {
+        last_bill_room: lastBillPrice > 0 ? `฿${formatNumber(lastBillPrice)}` : '฿0',
+        total_bill_room: totalBillRoom
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get bill room history error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch bill room history',
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลประวัติบิล',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Get remain summary for mobile app
+ * GET /api/bill_room/remain_summery?house_no=xxx&customer_id=xxx
+ * Returns unpaid_amount, paid_amount, and difference
+ */
+export const getRemainSummery = async (req, res) => {
+  try {
+    let { house_no, customer_id } = req.query;
+
+    if (!house_no || !customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters',
+        message: 'กรุณาระบุ house_no และ customer_id',
+        required: ['house_no', 'customer_id']
+      });
+    }
+
+    // Convert house_no: replace "-" with "/" (e.g., "100-10" -> "100/10")
+    house_no = house_no.replace(/-/g, '/');
+
+    const db = getDatabase();
+
+    // Get unpaid amount: sum of total_price where bill_room.status = 0 and bill.status = 1
+    const unpaidQuery = `
+      SELECT COALESCE(SUM(br.total_price), 0) as total
+      FROM ${TABLE_INFORMATION} br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.house_no = ? AND br.customer_id = ? AND br.status = 0 AND b.status = 1 AND br.status != 2
+    `;
+    const [unpaidRows] = await db.execute(unpaidQuery, [house_no, customer_id]);
+    const unpaidAmount = parseFloat(unpaidRows[0].total);
+
+    // Get paid amount: sum of total_price where bill_room.status IN (1, 5) and bill.status = 1
+    const paidQuery = `
+      SELECT COALESCE(SUM(br.total_price), 0) as total
+      FROM ${TABLE_INFORMATION} br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.house_no = ? AND br.customer_id = ? AND br.status IN (1, 5) AND b.status = 1 AND br.status != 2
+    `;
+    const [paidRows] = await db.execute(paidQuery, [house_no, customer_id]);
+    const paidAmount = parseFloat(paidRows[0].total);
+
+    // Get unpaid count: count of bill_room records where status = 0 and bill.status = 1
+    const unpaidCountQuery = `
+      SELECT COUNT(*) as count
+      FROM ${TABLE_INFORMATION} br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.house_no = ? AND br.customer_id = ? AND br.status = 0 AND b.status = 1 AND br.status != 2
+    `;
+    const [unpaidCountRows] = await db.execute(unpaidCountQuery, [house_no, customer_id]);
+    const unpaidCount = unpaidCountRows[0].count;
+
+    res.json({
+      success: true,
+      data: {
+        unpaid_amount: `฿${formatNumber(unpaidAmount)}`,
+        paid_amount: `฿${formatNumber(paidAmount)}`,
+        unpaid_count: unpaidCount
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get remain summery error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch remain summery',
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลสรุปยอดคงเหลือ',
       details: error.message
     });
   }

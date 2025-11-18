@@ -20,7 +20,8 @@
       "Bash(curl -s \"http://localhost:3000/api/bill_room/list?page=1&limit=1&customer_id=191&house_no=999&status=1\")",
       "Bash(curl -s \"http://localhost:3000/api/bill_room/app_list?page=1&limit=1&customer_id=191&house_no=999&status=1,5\")",
       "Bash(curl -s \"http://localhost:3000/api/bill_room/list?page=1&limit=1&customer_id=191&status=1\")",
-      "Bash(curl -s \"http://localhost:3000/api/bill/list?page=1&limit=1&customer_id=191&status=1\")"
+      "Bash(curl -s \"http://localhost:3000/api/bill/list?page=1&limit=1&customer_id=191&status=1\")",
+      "Bash(curl -s \"http://localhost:3000/api/bill_room/remain_summery?house_no=555&customer_id=191\")"
     ],
     "deny": [],
     "ask": []

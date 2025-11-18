@@ -9,6 +9,7 @@ const TABLE_TRANSACTION_TYPE = 'bill_transaction_type_information';
  * POST /api/bill_transaction/insert
  * Body: {
  *   bill_room_id: INT (required),
+ *   member_id: INT (required) - ID of member who paid,
  *   bill_transaction_type_id: INT (required) - ID from bill_transaction_type_information,
  *   transaction_amount: DECIMAL (required) - จำนวนเงินที่ชำระ,
  *   pay_date: TIMESTAMP (required) - วันที่ชำระ,
@@ -21,11 +22,12 @@ const TABLE_TRANSACTION_TYPE = 'bill_transaction_type_information';
 export const insertBillTransaction = async (req, res) => {
   try {
     const db = getDatabase();
-    const { bill_room_id, bill_transaction_type_id, transaction_amount, pay_date, transaction_type_json, remark, customer_id, uid } = req.body;
+    const { bill_room_id, member_id, bill_transaction_type_id, transaction_amount, pay_date, transaction_type_json, remark, customer_id, uid } = req.body;
 
     // Validate required fields
     const requiredFields = [];
     if (!bill_room_id) requiredFields.push('bill_room_id');
+    if (!member_id) requiredFields.push('member_id');
     if (!bill_transaction_type_id) requiredFields.push('bill_transaction_type_id');
     if (!transaction_amount) requiredFields.push('transaction_amount');
     if (!pay_date) requiredFields.push('pay_date');
@@ -128,15 +130,40 @@ export const insertBillTransaction = async (req, res) => {
       newBillRoomStatus = 1; // paid
     }
 
-    // Insert transaction record (payment_id is NULL for manual entry)
+    // Step 1: Insert payment_information first (manual entry, no slip)
+    const { randomBytes } = await import('crypto');
+    const uploadKey = randomBytes(16).toString('hex'); // Generate 32-char upload_key
+
+    const insertPaymentQuery = `
+      INSERT INTO payment_information
+      (upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, member_remark, payment_date, bank_id, create_by, update_date, update_by)
+      VALUES (?, 'bill_room_information', ?, ?, 3, ?, 1, ?, ?, NULL, ?, NULL, ?, NOW(), ?)
+    `;
+
+    const [paymentResult] = await db.execute(insertPaymentQuery, [
+      uploadKey,
+      bill_room_id,
+      amountValue,
+      customer_id,
+      member_id,
+      remark || null,
+      pay_date,
+      uid,
+      uid
+    ]);
+
+    const paymentId = paymentResult.insertId;
+
+    // Step 2: Insert transaction record with payment_id
     const insertQuery = `
       INSERT INTO bill_transaction_information
       (bill_room_id, payment_id, transaction_amount, bill_transaction_type_id, transaction_type_json, pay_date, transaction_type, remark, customer_id, status, create_by)
-      VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     `;
 
     const [result] = await db.execute(insertQuery, [
       bill_room_id,
+      paymentId, // Now has payment_id
       amountValue,
       billTransactionTypeId,
       transactionTypeJsonString,
@@ -153,7 +180,7 @@ export const insertBillTransaction = async (req, res) => {
       [newBillRoomStatus, uid, bill_room_id]
     );
 
-    logger.info(`Bill transaction inserted: id=${result.insertId}, bill_room_id=${bill_room_id}, amount=${amountValue}, type=${transactionType}, new_status=${newBillRoomStatus}, by user=${uid}`);
+    logger.info(`Bill transaction inserted: transaction_id=${result.insertId}, payment_id=${paymentId}, bill_room_id=${bill_room_id}, amount=${amountValue}, type=${transactionType}, new_status=${newBillRoomStatus}, by user=${uid}`);
 
     // Fetch the inserted record with formatted dates
     const [insertedRows] = await db.execute(
@@ -168,6 +195,7 @@ export const insertBillTransaction = async (req, res) => {
       message: 'บันทึกรายการชำระเงินสำเร็จ',
       data: {
         ...formattedData,
+        payment_id: paymentId, // Include payment_id in response
         bill_room_status: newBillRoomStatus,
         total_paid: newTotalPaid,
         total_price: totalPrice,

@@ -228,3 +228,66 @@ export const getMemberList = async (req, res) => {
     });
   }
 };
+
+/**
+ * Get member ID by house number and full name
+ * GET /api/member/getMemberIDByHouseNo?customer_id=xxx&house_no=xxx&full_name=xxx
+ */
+export const getMemberIDByHouseNo = async (req, res) => {
+  try {
+    const { customer_id, house_no, full_name } = req.query;
+
+    // Validate required parameters
+    if (!customer_id || !house_no || !full_name) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters',
+        message: 'กรุณาระบุ customer_id, house_no และ full_name',
+        required: ['customer_id', 'house_no', 'full_name']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Build query with all required parameters
+    const query = `
+      SELECT id, house_no, full_name, prefix_name, user_level
+      FROM ${TABLE_INFORMATION}
+      WHERE house_no = ? AND customer_id = ? AND full_name = ? AND status != 2
+      LIMIT 1
+    `;
+
+    const queryParams = [house_no, customer_id, full_name.trim()];
+
+    const [rows] = await db.execute(query, queryParams);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Member not found',
+        message: 'ไม่พบสมาชิกในบ้านเลขที่นี้'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        member_id: rows[0].id,
+        house_no: rows[0].house_no,
+        full_name: rows[0].full_name,
+        prefix_name: rows[0].prefix_name,
+        user_level: rows[0].user_level
+      },
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    logger.error('Get member ID by house no error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get member ID',
+      message: 'เกิดข้อผิดพลาดในการดึงข้อมูลสมาชิก',
+      details: error.message
+    });
+  }
+};

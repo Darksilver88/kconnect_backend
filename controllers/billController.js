@@ -337,7 +337,7 @@ export const updateBill = async (req, res) => {
       // แต่ไม่รวม 1 -> 1 (user แค่แก้ข้อมูลอื่น)
       if (currentStatus !== 1 && parseInt(status) === 1) {
         try {
-          await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, 'ส่งบิล');
+          await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, title, detail, expire_date, 'ส่งบิล');
           logger.info(`Bill ${id} status changed to sent (${currentStatus} -> 1), notification audit created`);
         } catch (notifError) {
           // Log error but don't fail the update
@@ -394,8 +394,8 @@ export const sendBill = async (req, res) => {
 
     const db = getDatabase();
 
-    // Check if bill exists and get current status and customer_id
-    const checkQuery = `SELECT status, customer_id FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    // Check if bill exists and get current status, customer_id, title, detail, expire_date
+    const checkQuery = `SELECT status, customer_id, title, detail, expire_date FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
     const [currentRows] = await db.execute(checkQuery, [id]);
 
     if (currentRows.length === 0) {
@@ -408,6 +408,9 @@ export const sendBill = async (req, res) => {
 
     const currentStatus = currentRows[0].status;
     const billCustomerId = currentRows[0].customer_id;
+    const billTitle = currentRows[0].title;
+    const billDetail = currentRows[0].detail;
+    const billExpireDate = currentRows[0].expire_date;
 
     // Update status from 0 or 3 to 1 and set send_date
     const updateQuery = `
@@ -434,7 +437,7 @@ export const sendBill = async (req, res) => {
     // Insert notification audit for all bill_rooms
     // เมื่อส่งบิล (status → 1) ต้องบันทึกการแจ้งเตือน
     try {
-      await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, 'ส่งบิล');
+      await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, billTitle, billDetail, billExpireDate, 'ส่งบิล');
       logger.info(`Bill ${id} sent, notification audit created`);
     } catch (notifError) {
       // Log error but don't fail the send operation
@@ -1070,7 +1073,7 @@ export const insertBillWithExcel = async (req, res) => {
       // ถ้าสร้างบิลพร้อมส่ง (status = 1) ให้บันทึกการแจ้งเตือน
       if (parseInt(status) === 1) {
         try {
-          await insertNotificationAuditForBill(db, billId, customer_id?.trim(), uid, 'สร้างและส่งบิล');
+          await insertNotificationAuditForBill(db, billId, customer_id?.trim(), uid, title, detail, expire_date, 'สร้างและส่งบิล');
           logger.info(`Bill ${billId} created with sent status, notification audit created for ${validatedRows.length} rooms`);
         } catch (notifError) {
           // Log error but don't fail the insert
@@ -1963,6 +1966,7 @@ export const getBillRoomPendingList = async (req, res) => {
       SELECT
         br.id,
         br.bill_no,
+        m.id as member_id,
         br.member_name,
         br.house_no,
         br.total_price,
@@ -1973,9 +1977,20 @@ export const getBillRoomPendingList = async (req, res) => {
         (br.total_price - COALESCE(SUM(bt.transaction_amount), 0)) as remaining_amount
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      LEFT JOIN member_information m
+        ON br.house_no = m.house_no
+        AND br.customer_id = m.customer_id
+        AND m.full_name = TRIM(
+          REGEXP_REPLACE(
+            br.member_name,
+            '^(นาย|นาง|นางสาว|เด็กชาย|เด็กหญิง|คุณ|Mr\\.|Mrs\\.|Miss|Ms\\.|Dr\\.)\\s*',
+            ''
+          )
+        )
+        AND m.status != 2
       LEFT JOIN bill_transaction_information bt ON br.id = bt.bill_room_id AND bt.status != 2
       ${whereClause}
-      GROUP BY br.id, br.bill_no, br.member_name, br.house_no, br.total_price, br.status, b.title, b.expire_date
+      GROUP BY br.id, br.bill_no, m.id, br.member_name, br.house_no, br.total_price, br.status, b.title, b.expire_date
       ORDER BY b.expire_date DESC, br.create_date DESC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
@@ -2006,6 +2021,7 @@ export const getBillRoomPendingList = async (req, res) => {
       return {
         id: row.id,
         bill_no: row.bill_no,
+        member_id: row.member_id,
         member_name: row.member_name,
         member_real_name: removePrefix(row.member_name),
         house_no: row.house_no,
@@ -2300,6 +2316,27 @@ export const sendNotificationEach = async (req, res) => {
 
     const db = getDatabase();
 
+    // Query bill title, detail, and expire_date from bill_room_information → bill_information
+    const billQuery = `
+      SELECT b.title, b.detail, b.expire_date
+      FROM bill_room_information br
+      INNER JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.id = ? AND br.customer_id = ? AND br.status != 2
+    `;
+    const [billRows] = await db.execute(billQuery, [parseInt(id), customer_id]);
+
+    if (billRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill room not found',
+        message: 'ไม่พบข้อมูล bill_room'
+      });
+    }
+
+    const billTitle = billRows[0].title;
+    const billDetail = billRows[0].detail;
+    const billExpireDate = billRows[0].expire_date;
+
     // Get notification resend interval from config
     const configQuery = `
       SELECT config_value
@@ -2352,6 +2389,9 @@ export const sendNotificationEach = async (req, res) => {
       parseInt(id),      // bill_room_id
       customer_id,
       uid,
+      billTitle,         // title from bill_information
+      billDetail,        // detail from bill_information
+      billExpireDate,    // expire_date from bill_information
       'ส่งอีกครั้ง',     // remark
       { mode: 'bill_room' }
     );

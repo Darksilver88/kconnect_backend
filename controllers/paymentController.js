@@ -658,7 +658,7 @@ export const getPaymentDetail = async (req, res) => {
     const db = getDatabase();
 
     const detailQuery = `
-      SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark,
+      SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark, p.member_remark,
              p.create_date, p.create_by, p.update_date, p.update_by, p.delete_date, p.delete_by,
              CONCAT(m.prefix_name, m.full_name) as member_name,
              m.full_name as member_real_name,
