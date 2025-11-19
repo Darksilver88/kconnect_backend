@@ -534,9 +534,9 @@ export const getPaymentList = async (req, res) => {
       // Generate Excel file buffer
       const excelBuffer = await workbook.xlsx.writeBuffer();
 
-      // Generate file name with timestamp
+      // Generate file name with timestamp (YYYYMMDD format)
       const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
-      const fileName = `payment_list_${customer_id}_${timestamp}.xlsx`;
+      const fileName = `payment_list_${timestamp}.xlsx`;
 
       // Set response headers for file download
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

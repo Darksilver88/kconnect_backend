@@ -1483,7 +1483,7 @@ export const getBillRoomList = async (req, res) => {
       // Generate Excel file buffer
       const excelBuffer = await workbook.xlsx.writeBuffer();
 
-      // Generate file name with timestamp
+      // Generate file name with timestamp (YYYYMMDD format)
       const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
       const fileName = `bill_room_list_${timestamp}.xlsx`;
 
