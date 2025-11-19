@@ -115,3 +115,53 @@ export function skipAuth(req, res, next) {
   logger.debug('Skipping authentication for public endpoint');
   next();
 }
+
+/**
+ * Optional authentication - token is optional (for app endpoints)
+ * If token exists and valid -> attach user info
+ * If token missing or invalid -> continue without error
+ */
+export function optionalAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+
+    // ถ้าไม่มี token -> skip (ไม่ error)
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      logger.debug('No token provided, skipping authentication');
+      return next();
+    }
+
+    const token = authHeader.substring(7);
+
+    // Decode JWT token
+    const decoded = jwt.decode(token);
+
+    if (!decoded || !decoded.values) {
+      logger.debug('Invalid token structure, skipping authentication');
+      return next();
+    }
+
+    // Check token expiration
+    const currentTime = Math.floor(Date.now() / 1000);
+    if (decoded.exp && decoded.exp < currentTime) {
+      logger.debug('Token expired, skipping authentication');
+      return next();
+    }
+
+    // Attach user info if token is valid
+    req.user = {
+      userid: decoded.values.userid || null,
+      userlevel: decoded.values.userlevel || null,
+      username: decoded.values.username || null,
+      userprimarykey: decoded.values.userprimarykey || null,
+      token: token
+    };
+
+    logger.debug(`Optional auth: User authenticated (${decoded.values.username})`);
+    next();
+
+  } catch (error) {
+    logger.debug('Optional auth error, continuing without authentication:', error.message);
+    next(); // Continue without error
+  }
+}

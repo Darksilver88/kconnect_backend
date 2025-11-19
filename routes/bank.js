@@ -1,18 +1,20 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { insertBank, getBankList, getBankDetail, updateBank, deleteBank, getMasterBankList } from '../controllers/bankController.js';
-import { authenticateJWT, verifyCustomerAccess } from '../middleware/auth.js';
+import { authenticateJWT, verifyCustomerAccess, optionalAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Apply authentication middleware to all routes
+// App routes (optional auth)
+router.get('/list', optionalAuth, getBankList);
+
+// Apply authentication middleware to remaining routes
 router.use(authenticateJWT);
 router.use(verifyCustomerAccess);
 
-// Bank routes
+// Web routes (require auth)
 router.post('/insert', upload.none(), insertBank);
 router.get('/master_list', getMasterBankList);
-router.get('/list', getBankList);
 router.get('/:id', getBankDetail);
 router.put('/update', upload.none(), updateBank);
 router.delete('/delete', upload.none(), deleteBank);

@@ -1,6 +1,7 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { uploadFiles, deleteFile } from '../controllers/uploadController.js';
+import { optionalAuth } from '../middleware/auth.js';
 import authRoutes from './auth.js';
 import testDataRoutes from './testData.js';
 import newsRoutes from './news.js';
@@ -28,9 +29,9 @@ router.get('/test', (req, res) => {
 // Public routes (no authentication required)
 router.use('/auth', authRoutes);
 
-// File upload/delete endpoints
-router.post('/upload_file', upload.array('files'), uploadFiles);
-router.delete('/delete_file', upload.none(), deleteFile);
+// File upload/delete endpoints (optional auth)
+router.post('/upload_file', optionalAuth, upload.array('files'), uploadFiles);
+router.delete('/delete_file', optionalAuth, upload.none(), deleteFile);
 
 router.use('/test-data', testDataRoutes);
 router.use('/news', newsRoutes);

@@ -1,16 +1,18 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { insertPayment, updatePayment, getPaymentList, getPaymentSummaryStatus, getPaymentSummaryStatus2, getPaymentDetail, getPaymentSummaryData } from '../controllers/paymentController.js';
-import { authenticateJWT, verifyCustomerAccess } from '../middleware/auth.js';
+import { authenticateJWT, verifyCustomerAccess, optionalAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Apply authentication middleware to all routes
+// App routes (optional auth)
+router.post('/insert', optionalAuth, upload.none(), insertPayment);
+
+// Apply authentication middleware to remaining routes
 router.use(authenticateJWT);
 router.use(verifyCustomerAccess);
 
-// Payment routes
-router.post('/insert', upload.none(), insertPayment);
+// Web routes (require auth)
 router.put('/update', upload.none(), updatePayment);
 router.get('/list', getPaymentList);
 router.get('/summary_status', getPaymentSummaryStatus);

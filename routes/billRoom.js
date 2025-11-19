@@ -1,21 +1,23 @@
 import express from 'express';
 import { upload } from '../utils/fileUpload.js';
 import { insertBillRoom, getBillRoomList, getBillRoomAppList, getBillRoomDetail, getCurrentBillRoom, getBillRoomHistory, getRemainSummery } from '../controllers/billRoomController.js';
-import { authenticateJWT, verifyCustomerAccess } from '../middleware/auth.js';
+import { authenticateJWT, verifyCustomerAccess, optionalAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Apply authentication middleware to all routes
+// App routes (optional auth - no token required)
+router.get('/current_bill_room', optionalAuth, getCurrentBillRoom);
+router.get('/remain_summery', optionalAuth, getRemainSummery);
+router.get('/history', optionalAuth, getBillRoomHistory);
+router.get('/app_list', optionalAuth, getBillRoomAppList);
+router.get('/:id', optionalAuth, getBillRoomDetail);
+
+// Apply authentication middleware to remaining routes
 router.use(authenticateJWT);
 router.use(verifyCustomerAccess);
 
-// Bill Room routes
+// Web routes (require auth)
 router.post('/insert', upload.none(), insertBillRoom);
 router.get('/list', getBillRoomList);
-router.get('/app_list', getBillRoomAppList);
-router.get('/current_bill_room', getCurrentBillRoom);
-router.get('/history', getBillRoomHistory);
-router.get('/remain_summery', getRemainSummery);
-router.get('/:id', getBillRoomDetail);
 
 export default router;
