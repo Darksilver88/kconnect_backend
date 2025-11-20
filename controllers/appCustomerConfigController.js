@@ -1,5 +1,7 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
+import { getCustomerNameByCode } from '../utils/firebaseNotificationHelper.js';
+import { getFirestore } from '../config/firebase.js';
 
 /**
  * Initialize app customer config with default values
@@ -21,6 +23,54 @@ export const initAppCustomerConfig = async (req, res) => {
 
     const db = getDatabase();
 
+    // Get customer name from Firebase
+    const customerName = await getCustomerNameByCode(customer_id);
+
+    let customerAddress = null;
+    let customerPhone1 = null;
+    let customerPhone2 = null;
+    let customerEmail = null;
+
+    if (customerName) {
+      try {
+        // Query niti_data from Firebase
+        const firestore = getFirestore();
+        const nitiDataRef = firestore
+          .collection('corporation').doc(customerName)
+          .collection('site').doc(customerName)
+          .collection('niti_data');
+
+        const nitiDataSnapshot = await nitiDataRef.limit(1).get();
+
+        if (!nitiDataSnapshot.empty) {
+          const doc = nitiDataSnapshot.docs[0];
+          const data = doc.data();
+
+          if (data.address && data.address.trim() !== '') {
+            customerAddress = data.address;
+            logger.info(`Found customer address from Firebase: ${customerAddress}`);
+          }
+
+          if (data.phone1 && data.phone1.trim() !== '') {
+            customerPhone1 = data.phone1;
+            logger.info(`Found customer phone1 from Firebase: ${customerPhone1}`);
+          }
+
+          if (data.phone2 && data.phone2.trim() !== '') {
+            customerPhone2 = data.phone2;
+            logger.info(`Found customer phone2 from Firebase: ${customerPhone2}`);
+          }
+
+          if (data.email && data.email.trim() !== '') {
+            customerEmail = data.email;
+            logger.info(`Found customer email from Firebase: ${customerEmail}`);
+          }
+        }
+      } catch (error) {
+        logger.error('Error fetching customer data from Firebase:', error);
+      }
+    }
+
     const defaultConfigs = [
       {
         key: 'bank_transfer',
@@ -31,26 +81,76 @@ export const initAppCustomerConfig = async (req, res) => {
         icon: '<i class="fas fa-university text-xl"></i>',
         background_color: '#193cb8'
       }
-      // Test configs (for testing different data types)
-      // {
-      //   key: 'payment_processing_fee',
-      //   value: '2.5',
-      //   type: 'number',
-      //   title: 'ค่าธรรมเนียมการชำระเงิน',
-      //   description: 'ค่าธรรมเนียมเพิ่มเติมสำหรับการชำระเงินออนไลน์ (%)',
-      //   icon: '<i class="fas fa-percentage text-xl"></i>',
-      //   background_color: '#f59e0b'
-      // },
-      // {
-      //   key: 'payment_deadline_message',
-      //   value: 'กรุณาชำระค่าส่วนกลางภายในวันที่ 5 ของทุกเดือน',
-      //   type: 'string',
-      //   title: 'ข้อความแจ้งเตือนกำหนดชำระ',
-      //   description: 'ข้อความที่จะแสดงให้ลูกบ้านเห็นเกี่ยวกับกำหนดการชำระเงิน',
-      //   icon: '<i class="fas fa-calendar-alt text-xl"></i>',
-      //   background_color: '#10b981'
-      // }
     ];
+
+    // Add customer configs if data is found
+    if (customerAddress) {
+      defaultConfigs.push({
+        key: 'customer_address',
+        value: customerAddress,
+        type: 'string',
+        title: customerAddress,
+        description: null,
+        icon: null,
+        background_color: null
+      });
+    }
+
+    if (customerPhone1) {
+      defaultConfigs.push({
+        key: 'customer_phone1',
+        value: customerPhone1,
+        type: 'string',
+        title: customerPhone1,
+        description: null,
+        icon: null,
+        background_color: null
+      });
+    }
+
+    if (customerPhone2) {
+      defaultConfigs.push({
+        key: 'customer_phone2',
+        value: customerPhone2,
+        type: 'string',
+        title: customerPhone2,
+        description: null,
+        icon: null,
+        background_color: null
+      });
+    }
+
+    if (customerEmail) {
+      defaultConfigs.push({
+        key: 'customer_email',
+        value: customerEmail,
+        type: 'string',
+        title: customerEmail,
+        description: null,
+        icon: null,
+        background_color: null
+      });
+    }
+
+    // Test configs (for testing different data types)
+    // {
+    //   key: 'payment_processing_fee',
+    //   value: '2.5',
+    //   type: 'number',
+    //   title: 'ค่าธรรมเนียมการชำระเงิน',
+    //   description: 'ค่าธรรมเนียมเพิ่มเติมสำหรับการชำระเงินออนไลน์ (%)',
+    //   icon: '<i class="fas fa-percentage text-xl"></i>',
+    //   background_color: '#f59e0b'
+    // },
+    // {
+    //   key: 'payment_deadline_message',
+    //   value: 'กรุณาชำระค่าส่วนกลางภายในวันที่ 5 ของทุกเดือน',
+    //   type: 'string',
+    //   title: 'ข้อความแจ้งเตือนกำหนดชำระ',
+    //   description: 'ข้อความที่จะแสดงให้ลูกบ้านเห็นเกี่ยวกับกำหนดการชำระเงิน',
+    //   icon: '<i class="fas fa-calendar-alt text-xl"></i>',
+    //   background_color: '#10b981'
+    // }
 
     const insertedConfigs = [];
 

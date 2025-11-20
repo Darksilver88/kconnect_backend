@@ -1277,7 +1277,7 @@ export const createAppCustomerConfig = async (req, res) => {
     const createConfigTableQuery = `
       CREATE TABLE IF NOT EXISTS app_customer_config (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        config_key VARCHAR(100) NOT NULL UNIQUE,
+        config_key VARCHAR(100) NOT NULL,
         config_value TEXT NOT NULL,
         data_type ENUM('string', 'number', 'boolean', 'json') DEFAULT 'string',
         title VARCHAR(255),
@@ -1288,7 +1288,8 @@ export const createAppCustomerConfig = async (req, res) => {
         is_active BOOLEAN DEFAULT TRUE,
         create_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         update_date TIMESTAMP NULL,
-        update_by INT NULL
+        update_by INT NULL,
+        UNIQUE KEY unique_config_per_customer (config_key, customer_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `;
 
@@ -1350,7 +1351,8 @@ export const clearTables = async (req, res) => {
       'bill_attachment',
       'notification_audit_information',
       'bank_information',
-      'bank_attachment'
+      'bank_attachment',
+      'app_customer_config'
     ];
 
     const results = [];

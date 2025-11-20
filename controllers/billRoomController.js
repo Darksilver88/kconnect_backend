@@ -3,9 +3,78 @@ import logger from '../utils/logger.js';
 import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
 import { getFileUrl } from '../utils/storageManager.js';
 import { getFirestore } from '../config/firebase.js';
+import { getCustomerNameByCode } from '../utils/firebaseNotificationHelper.js';
+import puppeteer from 'puppeteer';
+import QRCode from 'qrcode';
 
 const MENU = 'bill_room';
 const TABLE_INFORMATION = `${MENU}_information`;
+
+// Helper function to convert number to Thai text
+function numberToThaiText(number) {
+  const thaiNumbers = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
+  const thaiUnits = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน', 'ล้าน'];
+
+  if (number === 0) return 'ศูนย์บาทถ้วน';
+
+  const [baht, satang] = number.toFixed(2).split('.');
+  let result = '';
+
+  // Convert baht
+  const bahtNum = parseInt(baht);
+  if (bahtNum > 0) {
+    const bahtStr = bahtNum.toString();
+    const len = bahtStr.length;
+
+    for (let i = 0; i < len; i++) {
+      const digit = parseInt(bahtStr[i]);
+      const position = len - i - 1;
+
+      if (digit === 0) continue;
+
+      if (position === 1 && digit === 1) {
+        result += 'สิบ';
+      } else if (position === 1 && digit === 2) {
+        result += 'ยี่สิบ';
+      } else if (position === 0 && digit === 1 && len > 1) {
+        result += 'เอ็ด';
+      } else {
+        result += thaiNumbers[digit] + thaiUnits[position];
+      }
+    }
+    result += 'บาท';
+  }
+
+  // Convert satang
+  const satangNum = parseInt(satang);
+  if (satangNum > 0) {
+    const satangStr = satangNum.toString().padStart(2, '0');
+    const len = satangStr.length;
+
+    for (let i = 0; i < len; i++) {
+      const digit = parseInt(satangStr[i]);
+      const position = len - i - 1;
+
+      if (digit === 0) continue;
+
+      if (position === 1 && digit === 1) {
+        result += 'สิบ';
+      } else if (position === 1 && digit === 2) {
+        result += 'ยี่สิบ';
+      } else if (position === 0 && digit === 1 && len > 1) {
+        result += 'เอ็ด';
+      } else {
+        result += thaiNumbers[digit];
+        if (position === 1) result += 'สิบ';
+      }
+    }
+    result += 'สตางค์';
+  } else {
+    result += 'ถ้วน';
+  }
+
+  return result;
+}
 
 // Helper function to get master bank list from Firebase
 async function getMasterBankListData() {
@@ -1030,6 +1099,461 @@ export const getRemainSummery = async (req, res) => {
       error: 'Failed to fetch remain summery',
       message: 'เกิดข้อผิดพลาดในการดึงข้อมูลสรุปยอดคงเหลือ',
       details: error.message
+    });
+  }
+};
+/**
+ * Get Invoice PDF
+ * GET /api/bill_room/getInvoice?bill_room_id=1&customer_id=191
+ */
+export const getInvoice = async (req, res) => {
+  try {
+    const { bill_room_id, customer_id } = req.query;
+
+    // Validate required parameters
+    if (!bill_room_id || !customer_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required parameters',
+        message: 'กรุณาระบุ bill_room_id และ customer_id',
+        required: ['bill_room_id', 'customer_id']
+      });
+    }
+
+    const db = getDatabase();
+
+    // Query bill_room with bill information
+    const query = `
+      SELECT
+        br.id,
+        br.bill_id,
+        br.bill_no,
+        br.house_no,
+        br.member_name,
+        br.total_price,
+        br.customer_id,
+        br.create_date,
+        b.title as bill_title,
+        b.expire_date
+      FROM bill_room_information br
+      LEFT JOIN bill_information b ON br.bill_id = b.id
+      WHERE br.id = ? AND br.customer_id = ? AND br.status != 2
+    `;
+
+    const [rows] = await db.execute(query, [bill_room_id, customer_id]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Bill room not found',
+        message: 'ไม่พบข้อมูลบิล'
+      });
+    }
+
+    const billRoom = rows[0];
+
+    // Get customer name from Firebase
+    const customerName = await getCustomerNameByCode(customer_id);
+    const companyName = customerName ? `นิติบุคคล${customerName}` : 'นิติบุคคล';
+
+    // Get customer address from app_customer_config
+    // Query customer configs from app_customer_config
+    const configQuery = `
+      SELECT config_key, config_value
+      FROM app_customer_config
+      WHERE config_key IN ('customer_address', 'customer_phone1', 'customer_phone2', 'customer_email')
+        AND customer_id = ?
+        AND is_active = 1
+    `;
+    const [configRows] = await db.execute(configQuery, [customer_id]);
+
+    // Extract config values
+    const customerAddress = configRows.find(row => row.config_key === 'customer_address')?.config_value || null;
+    const customerPhone1 = configRows.find(row => row.config_key === 'customer_phone1')?.config_value || null;
+    const customerPhone2 = configRows.find(row => row.config_key === 'customer_phone2')?.config_value || null;
+    const customerEmail = configRows.find(row => row.config_key === 'customer_email')?.config_value || null;
+
+    // Build phone display text
+    let phoneText = '';
+    if (customerPhone1) {
+      phoneText = customerPhone1;
+      if (customerPhone2) {
+        phoneText += ',' + customerPhone2;
+      }
+    } else if (customerPhone2) {
+      phoneText = customerPhone2;
+    }
+    if (!phoneText) phoneText = '-';
+
+    // Format dates (ค.ศ.)
+    const createDate = new Date(billRoom.create_date);
+    const expireDate = new Date(billRoom.expire_date);
+
+    const createDateFormatted = `${String(createDate.getUTCDate()).padStart(2, '0')}/${String(createDate.getUTCMonth() + 1).padStart(2, '0')}/${createDate.getUTCFullYear()}`;
+    const expireDateFormatted = `${String(expireDate.getUTCDate()).padStart(2, '0')}/${String(expireDate.getUTCMonth() + 1).padStart(2, '0')}/${expireDate.getUTCFullYear()}`;
+
+    // Format total price
+    const totalPrice = parseFloat(billRoom.total_price);
+    const totalPriceFormatted = totalPrice.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+    // Convert to Thai text
+    const totalPriceThaiText = numberToThaiText(totalPrice);
+
+    // Generate QR Code for app download
+    const qrCodeData = await QRCode.toDataURL('https://onelink.to/q45d3c', {
+      width: 80,
+      margin: 1
+    });
+
+    const html = `<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ใบแจ้งค่าใช้จ่าย / Invoice</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Sarabun', 'Tahoma', sans-serif;
+            padding: 0;
+            margin: 0;
+            background-color: white;
+        }
+
+        .invoice-container {
+            max-width: 100%;
+            margin: 0;
+            background-color: white;
+            padding: 40px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .company-info h1 {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .company-info p {
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        .invoice-title {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .customer-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+            font-size: 11px;
+        }
+
+        .customer-info-left {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px;
+        }
+
+        .customer-info-right {
+            display: grid;
+            grid-template-columns: auto auto;
+            gap: 8px 15px;
+            justify-content: end;
+        }
+
+        .customer-info .label {
+            font-weight: normal;
+        }
+
+        .customer-info .value {
+            font-weight: normal;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+
+        table, th, td {
+            border: 1px solid #000;
+        }
+
+        th {
+            background-color: white;
+            padding: 8px;
+            text-align: center;
+            font-size: 11px;
+            font-weight: normal;
+            vertical-align: middle;
+        }
+
+        td {
+            padding: 8px;
+            font-size: 11px;
+        }
+
+        .description-col {
+            text-align: left;
+        }
+
+        .amount-col {
+            text-align: right;
+        }
+
+        .item-row td {
+            height: 200px;
+            vertical-align: top;
+        }
+
+        .summary-section {
+            text-align: right;
+            font-size: 11px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: flex-end;
+            padding: 5px 10px;
+        }
+
+        .summary-label {
+            width: 250px;
+            text-align: right;
+            padding-right: 20px;
+        }
+
+        .summary-value {
+            width: 150px;
+            text-align: right;
+        }
+
+        .note-payment-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .note-section {
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .note-section p {
+            margin-bottom: 3px;
+        }
+
+        .payment-notice {
+            font-size: 11px;
+            font-weight: bold;
+            text-align: left;
+        }
+
+        .payment-notice p {
+            margin-bottom: 3px;
+        }
+
+        .qr-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .qr-text p {
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .qr-text p:first-child {
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <!-- Header -->
+        <div class="header">
+            <div class="company-info">
+                <h1>${companyName}</h1>
+                <p>${customerAddress || '-'}</p>
+                <p>Tax ID - โทร: ${phoneText} Email: ${customerEmail || '-'}</p>
+            </div>
+            <div class="invoice-title">
+                ใบแจ้งค่าใช้จ่าย / Invoice
+            </div>
+        </div>
+
+        <!-- Customer Information -->
+        <div class="customer-info">
+            <!-- Left Column -->
+            <div class="customer-info-left">
+                <div class="label">ชื่อ / ATTN</div>
+                <div class="value">${billRoom.member_name}</div>
+
+                <div class="label">ที่อยู่ / Address</div>
+                <div class="value">${billRoom.house_no}${customerAddress ? ' ' + customerAddress : ''}</div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="customer-info-right">
+                <div class="label">เลขที่ / No.</div>
+                <div class="value">${billRoom.bill_no}</div>
+
+                <div class="label">วันที่ / Date</div>
+                <div class="value">${createDateFormatted}</div>
+
+                <div class="label">บ้านเลขที่ / Room No</div>
+                <div class="value">${billRoom.house_no}</div>
+            </div>
+        </div>
+
+        <!-- Items Table -->
+        <table>
+            <thead>
+                <tr>
+                    <th class="description-col">รายการ<br>Description</th>
+                    <th class="amount-col">จำนวนเงิน<br>Amount (Baht)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="item-row">
+                    <td class="description-col">${billRoom.bill_title}</td>
+                    <td class="amount-col">${totalPriceFormatted}</td>
+                </tr>
+                <!-- Summary Rows -->
+                <tr>
+                    <td class="description-col" style="text-align: right; border-bottom: none;">รวมเงิน / Total</td>
+                    <td class="amount-col" style="border-bottom: none;">${totalPriceFormatted}</td>
+                </tr>
+                <tr>
+                    <td class="description-col" style="border-top: none; border-bottom: none; padding: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>( ${totalPriceThaiText} )</span>
+                            <span>ยอดค้างชำระ / Outstanding Balance</span>
+                        </div>
+                    </td>
+                    <td class="amount-col" style="border-top: none; border-bottom: none;">0.00</td>
+                </tr>
+                <tr>
+                    <td class="description-col" style="text-align: right; border-top: none;">รวมเงินทั้งสิ้น / Grand Total</td>
+                    <td class="amount-col" style="border-top: none;">${totalPriceFormatted}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Payment Due Date -->
+        <p style="font-size: 11px; margin-top: 15px; font-weight: bold;">โปรดชำระค่าใช้จ่ายนี้เรียกเก็บภายในวันที่ ${expireDateFormatted}</p>
+
+        <!-- Notes and Payment Notice Section -->
+        <div class="note-payment-section">
+            <!-- Notes - Left Column -->
+            <div class="note-section">
+                <p>1.หากมีข้อสงสัยประการใด กรุณาติดต่อนิติบุคคล</p>
+                <p>2.กรุณาขอรับใบเสร็จทุกครั้งที่มีการชำระเงิน</p>
+                <p>3.เอกสารฉบับนี้ไม่สามารถใช้แทนใบเสร็จรับเงินได้</p>
+                <p>4.กรณีลูกค้าชำระค่าใช้จ่าย ระบบจะนำไปตัดหนี้เก่าที่ค้างชำระอยู่ก่อนเสมอ (รวมเงินเพิ่ม)</p>
+                <p>5.กรณีชำระไม่ตรงตามยอดในใบแจ้งหนี้ ระบบจะตัดตามยอดที่ลูกค้าชำระจริง</p>
+                <p>6.กรณีชำระเกินกำหนดการชำระเงินตามข้อบังคับ ท่านจะต้องเสียเงินเพิ่มในยอดใบแจ้งหนี้ถัดไป</p>
+            </div>
+
+            <!-- Payment Notice - Right Column -->
+            <div class="payment-notice">
+                <p>กรณีชำระค่าใช้จ่ายเกินกำหนดตามข้อบังคับมีเงินเพิ่มรายวัน</p>
+                <p>จากการชำระล่าช้าหลังวันออกใบแจ้งหนี้</p>
+            </div>
+        </div>
+
+        <!-- QR Code Section -->
+        <div class="qr-section">
+            <img src="${qrCodeData}" width="80" height="80" style="border: none;" />
+            <div class="qr-text">
+                <p><strong>Scan QR เพื่อดาวน์โหลด KConnect Application</strong></p>
+                <p>สะดวกสบายในเรื่องการดูค่าใช้จ่าย และ ดูโบะเสรีจำเนิน</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+
+    // Launch Puppeteer and generate PDF
+    logger.debug('Launching Puppeteer...');
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      ]
+    });
+
+    logger.debug('Creating new page...');
+    const page = await browser.newPage();
+
+    logger.debug('Setting HTML content...');
+    await page.setContent(html, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
+    });
+
+    logger.debug('Generating PDF...');
+    // Generate PDF
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      preferCSSPageSize: false,
+      margin: {
+        top: '20px',
+        right: '20px',
+        bottom: '20px',
+        left: '20px'
+      }
+    });
+
+    logger.debug('Closing browser...');
+    await browser.close();
+
+    logger.debug(`PDF buffer size: ${pdfBuffer.length} bytes`);
+
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const fileName = `invoice_${timestamp}.pdf`;
+
+    // Set headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    // Send PDF as binary
+    res.end(pdfBuffer, 'binary');
+
+    logger.info(`Invoice PDF generated: ${fileName}`);
+
+  } catch (error) {
+    logger.error('Get invoice error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate invoice PDF',
+      message: error.message
     });
   }
 };

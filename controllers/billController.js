@@ -9,6 +9,7 @@ import ExcelJS from 'exceljs';
 import fs from 'fs';
 import https from 'https';
 import http from 'http';
+import puppeteer from 'puppeteer';
 
 const MENU = 'bill';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -2449,6 +2450,378 @@ export const sendNotificationEach = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to send notification',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Get Invoice PDF
+ * GET /api/bill/getInvoice
+ */
+export const getInvoice = async (req, res) => {
+  try {
+    const html = `<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ใบแจ้งค่าใช้จ่าย / Invoice</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Sarabun', 'Tahoma', sans-serif;
+            padding: 0;
+            margin: 0;
+            background-color: white;
+        }
+
+        .invoice-container {
+            max-width: 100%;
+            margin: 0;
+            background-color: white;
+            padding: 40px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .company-info h1 {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .company-info p {
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        .invoice-title {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .customer-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+            font-size: 11px;
+        }
+
+        .customer-info-left {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px;
+        }
+
+        .customer-info-right {
+            display: grid;
+            grid-template-columns: auto auto;
+            gap: 8px 15px;
+            justify-content: end;
+        }
+
+        .customer-info .label {
+            font-weight: normal;
+        }
+
+        .customer-info .value {
+            font-weight: normal;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+
+        table, th, td {
+            border: 1px solid #000;
+        }
+
+        th {
+            background-color: white;
+            padding: 8px;
+            text-align: center;
+            font-size: 11px;
+            font-weight: normal;
+            vertical-align: middle;
+        }
+
+        td {
+            padding: 8px;
+            font-size: 11px;
+        }
+
+        .description-col {
+            text-align: left;
+        }
+
+        .amount-col {
+            text-align: right;
+        }
+
+        .item-row td {
+            height: 200px;
+            vertical-align: top;
+        }
+
+        .summary-section {
+            text-align: right;
+            font-size: 11px;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: flex-end;
+            padding: 5px 10px;
+        }
+
+        .summary-label {
+            width: 250px;
+            text-align: right;
+            padding-right: 20px;
+        }
+
+        .summary-value {
+            width: 150px;
+            text-align: right;
+        }
+
+        .note-payment-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .note-section {
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .note-section p {
+            margin-bottom: 3px;
+        }
+
+        .payment-notice {
+            font-size: 11px;
+            font-weight: bold;
+            text-align: left;
+        }
+
+        .payment-notice p {
+            margin-bottom: 3px;
+        }
+
+        .qr-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .qr-code {
+            width: 80px;
+            height: 80px;
+            border: 2px solid #000;
+            background-color: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+        }
+
+        .qr-text p {
+            font-size: 10px;
+            line-height: 1.4;
+        }
+
+        .qr-text p:first-child {
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <!-- Header -->
+        <div class="header">
+            <div class="company-info">
+                <h1>นิติบุคคลอาคารชุด สกายไลน์ รัตนาธิเบศร์</h1>
+                <p>411 ถนนรัตนาธิเบศร์ ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000</p>
+                <p>Tax ID 0994002076085 โทร: 02-5261981 Email: skyline.apm@gmail.com</p>
+            </div>
+            <div class="invoice-title">
+                ใบแจ้งค่าใช้จ่าย / Invoice
+            </div>
+        </div>
+
+        <!-- Customer Information -->
+        <div class="customer-info">
+            <!-- Left Column -->
+            <div class="customer-info-left">
+                <div class="label">ชื่อ / ATTN</div>
+                <div class="value">นางสาวเปียทิพย์ แซ่จึง</div>
+
+                <div class="label">ที่อยู่ / Address</div>
+                <div class="value">411/546(411/546) ถนนรัตนาธิเบศร์ ตำบลบางกระสอ อำเภอเมืองนนทบุรี นนทบุรี 11000</div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="customer-info-right">
+                <div class="label">เลขที่ / No.</div>
+                <div class="value">0245240800632</div>
+
+                <div class="label">วันที่ / Date</div>
+                <div class="value">01/08/2024</div>
+
+                <div class="label">บ้านเลขที่ / Room No</div>
+                <div class="value">411/546</div>
+            </div>
+        </div>
+
+        <!-- Items Table -->
+        <table>
+            <thead>
+                <tr>
+                    <th class="description-col">รายการ<br>Description</th>
+                    <th class="amount-col">จำนวนเงิน<br>Amount (Baht)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="item-row">
+                    <td class="description-col">ค่าใช้จ่ายส่วนกลาง/Common expenses ก.ย.67-ส.ค.68</td>
+                    <td class="amount-col">14,034.60</td>
+                </tr>
+                <!-- Summary Rows -->
+                <tr>
+                    <td class="description-col" style="text-align: right; border-bottom: none;">รวมเงิน / Total</td>
+                    <td class="amount-col" style="border-bottom: none;">14,034.60</td>
+                </tr>
+                <tr>
+                    <td class="description-col" style="border-top: none; border-bottom: none; padding: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>( หนึ่งหมื่นสี่พันสามสิบสี่บาทหกสิบสตางค์ )</span>
+                            <span>ยอดค้างชำระ / Outstanding Balance</span>
+                        </div>
+                    </td>
+                    <td class="amount-col" style="border-top: none; border-bottom: none;">0.00</td>
+                </tr>
+                <tr>
+                    <td class="description-col" style="text-align: right; border-top: none;">รวมเงินทั้งสิ้น / Grand Total</td>
+                    <td class="amount-col" style="border-top: none;">14,034.60</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Payment Due Date -->
+        <p style="font-size: 11px; margin-top: 15px; font-weight: bold;">โปรดชำระค่าใช้จ่ายนี้เรียกเก็บภายในวันที่ 30/09/2567</p>
+
+        <!-- Notes and Payment Notice Section -->
+        <div class="note-payment-section">
+            <!-- Notes - Left Column -->
+            <div class="note-section">
+                <p>1.หากมีข้อสงสัยประการใด กรุณาติดต่อนิติบุคคล</p>
+                <p>2.กรุณาขอรับใบเสร็จทุกครั้งที่มีการชำระเงิน</p>
+                <p>3.เอกสารฉบับนี้ไม่สามารถใช้แทนใบเสร็จรับเงินได้</p>
+                <p>4.กรณีลูกค้าชำระค่าใช้จ่าย ระบบจะนำไปตัดหนี้เก่าที่ค้างชำระอยู่ก่อนเสมอ (รวมเงินเพิ่ม)</p>
+                <p>5.กรณีชำระไม่ตรงตามยอดในใบแจ้งหนี้ ระบบจะตัดตามยอดที่ลูกค้าชำระจริง</p>
+                <p>6.กรณีชำระเกินกำหนดการชำระเงินตามข้อบังคับ ท่านจะต้องเสียเงินเพิ่มในยอดใบแจ้งหนี้ถัดไป</p>
+            </div>
+
+            <!-- Payment Notice - Right Column -->
+            <div class="payment-notice">
+                <p>กรณีชำระค่าใช้จ่ายเกินกำหนดตามข้อบังคับมีเงินเพิ่มรายวัน</p>
+                <p>จากการชำระล่าช้าหลังวันออกใบแจ้งหนี้</p>
+            </div>
+        </div>
+
+        <!-- QR Code Section -->
+        <div class="qr-section">
+            <div class="qr-code">
+                [QR CODE]
+            </div>
+            <div class="qr-text">
+                <p><strong>Scan QR เพื่อดาวน์โหลด KConnect Application</strong></p>
+                <p>สะดวกสบายในเรื่องการดูค่าใช้จ่าย และ ดูโบะเสรีจำเนิน</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+
+    // Launch Puppeteer and generate PDF
+    logger.debug('Launching Puppeteer...');
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu'
+      ]
+    });
+
+    logger.debug('Creating new page...');
+    const page = await browser.newPage();
+
+    logger.debug('Setting HTML content...');
+    await page.setContent(html, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
+    });
+
+    logger.debug('Generating PDF...');
+    // Generate PDF
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      preferCSSPageSize: false,
+      margin: {
+        top: '20px',
+        right: '20px',
+        bottom: '20px',
+        left: '20px'
+      }
+    });
+
+    logger.debug('Closing browser...');
+    await browser.close();
+
+    logger.debug(`PDF buffer size: ${pdfBuffer.length} bytes`);
+
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const fileName = `invoice_${timestamp}.pdf`;
+
+    // Set headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    // Send PDF as binary
+    res.end(pdfBuffer, 'binary');
+
+    logger.info(`Invoice PDF generated: ${fileName}`);
+
+  } catch (error) {
+    logger.error('Get invoice error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate invoice PDF',
       message: error.message
     });
   }
