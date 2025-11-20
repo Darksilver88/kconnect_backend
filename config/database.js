@@ -41,8 +41,18 @@ async function initDatabase() {
 
     pool = mysql.createPool(config);
 
-    // Test the connection
+    // Test the connection and set GLOBAL timezone
     const connection = await pool.getConnection();
+
+    try {
+      // Try to set GLOBAL timezone for entire MySQL server
+      await connection.query("SET GLOBAL time_zone = '+07:00'");
+      logger.info('MySQL GLOBAL timezone set to +07:00');
+    } catch (error) {
+      logger.warn('Could not set GLOBAL timezone (permission denied or not supported):', error.message);
+      logger.info('Falling back to connection-level timezone via config');
+    }
+
     logger.info('MySQL connection pool created successfully');
     connection.release();
 
