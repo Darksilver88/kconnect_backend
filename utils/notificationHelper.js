@@ -163,59 +163,63 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
   const type = "billing";
 
   for (const billRoom of billRoomRows) {
-    let receiver = null;
-
     try {
-      // Find matching member to get receiver (user_ref)
-      // Match on customer_id and house_no (exact), and member_name contains full_name
+      // Find all members by house_no and customer_id only
+      // No longer matching on member_name - query all members in the room
       const memberQuery = `
         SELECT user_ref
         FROM member_information
         WHERE customer_id = ?
           AND house_no = ?
-          AND ? LIKE CONCAT('%', full_name, '%')
           AND status != 2
-        LIMIT 1
       `;
 
       const [memberRows] = await db.execute(memberQuery, [
         billRoom.customer_id,
-        billRoom.house_no,
-        billRoom.member_name
+        billRoom.house_no
       ]);
 
-      if (memberRows.length > 0 && memberRows[0].user_ref) {
-        // Extract UID from user_ref (e.g., 'kconnect_users/7mEtLlUK1VfBzPMyEn5EYlH08xR2' -> '7mEtLlUK1VfBzPMyEn5EYlH08xR2')
-        const userRefParts = memberRows[0].user_ref.split('/');
-        receiver = userRefParts[userRefParts.length - 1];
-        logger.debug(`Found receiver ${receiver} for bill_room_id=${billRoom.id}`);
+      if (memberRows.length > 0) {
+        logger.debug(`Found ${memberRows.length} member(s) for bill_room_id=${billRoom.id}, house_no=${billRoom.house_no}`);
+
+        // Create notification for each member found
+        for (const member of memberRows) {
+          let receiver = null;
+
+          if (member.user_ref) {
+            // Extract UID from user_ref (e.g., 'kconnect_users/7mEtLlUK1VfBzPMyEn5EYlH08xR2' -> '7mEtLlUK1VfBzPMyEn5EYlH08xR2')
+            const userRefParts = member.user_ref.split('/');
+            receiver = userRefParts[userRefParts.length - 1];
+            logger.debug(`Found receiver ${receiver} for bill_room_id=${billRoom.id}`);
+          }
+
+          // Insert notification audit with hardcoded values and dynamic receiver
+          const fullOptions = {
+            remark,
+            title,
+            detail,
+            topic,
+            type,
+            receiver
+          };
+
+          const result = await insertNotificationAudit(db, 'bill_room_information', [billRoom.id], billRoom.customer_id, userId, fullOptions);
+
+          // Handle both old return format (number) and new return format (object)
+          if (typeof result === 'object' && result.insertedCount) {
+            insertedCount += result.insertedCount;
+            if (result.notificationsForFirebase) {
+              allNotificationsForFirebase.push(...result.notificationsForFirebase);
+            }
+          } else if (typeof result === 'number') {
+            insertedCount += result;
+          }
+        }
       } else {
-        logger.debug(`No matching member found for bill_room_id=${billRoom.id}, house_no=${billRoom.house_no}, member_name=${billRoom.member_name}`);
+        logger.debug(`No members found for bill_room_id=${billRoom.id}, house_no=${billRoom.house_no}`);
       }
     } catch (error) {
-      logger.error(`Error fetching receiver for bill_room_id=${billRoom.id}:`, error);
-    }
-
-    // Insert notification audit with hardcoded values and dynamic receiver
-    const fullOptions = {
-      remark,
-      title,
-      detail,
-      topic,
-      type,
-      receiver
-    };
-
-    const result = await insertNotificationAudit(db, 'bill_room_information', [billRoom.id], billRoom.customer_id, userId, fullOptions);
-
-    // Handle both old return format (number) and new return format (object)
-    if (typeof result === 'object' && result.insertedCount) {
-      insertedCount += result.insertedCount;
-      if (result.notificationsForFirebase) {
-        allNotificationsForFirebase.push(...result.notificationsForFirebase);
-      }
-    } else if (typeof result === 'number') {
-      insertedCount += result;
+      logger.error(`Error fetching receivers for bill_room_id=${billRoom.id}:`, error);
     }
   }
 

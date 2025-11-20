@@ -743,11 +743,15 @@ export const insertBillWithExcel = async (req, res) => {
       // กรณีส่งมาเป็น JSON array: [2, 4]
       excludedRowsArray = excluded_rows.map(num => parseInt(num));
     } else if (typeof excluded_rows === 'string' && excluded_rows.trim() !== '') {
-      // กรณีส่งมาเป็น form-data string: "[2,4]" หรือ "2,4"
+      // กรณีส่งมาเป็น form-data string: "[2,4]" หรือ "2,4" หรือ "2"
       try {
         const parsed = JSON.parse(excluded_rows);
         if (Array.isArray(parsed)) {
+          // กรณี "[2,4]" → [2, 4]
           excludedRowsArray = parsed.map(num => parseInt(num));
+        } else if (typeof parsed === 'number' && !isNaN(parsed)) {
+          // กรณี "2" → 2 (ตัวเลขเดียว)
+          excludedRowsArray = [parseInt(parsed)];
         }
       } catch {
         // ถ้า parse ไม่ได้ ลองแยกด้วย comma
@@ -2256,8 +2260,28 @@ export const getBillExcelList = async (req, res) => {
           errorMessage = 'ยอดเงินไม่ใช่ตัวเลข';
           invalidCount++;
         } else {
-          validCount++;
-          totalPriceSum += priceValue; // รวมยอดเงินของแถวที่ถูกต้อง
+          // เช็คว่าเลขห้องมีในระบบหรือไม่
+          const customer_id = req.query.customer_id;
+          if (customer_id) {
+            const checkRoomQuery = `
+              SELECT id FROM room_information
+              WHERE title = ? AND customer_id = ? AND status != 2
+              LIMIT 1
+            `;
+            const [roomExists] = await db.execute(checkRoomQuery, [houseNo, customer_id]);
+
+            if (roomExists.length === 0) {
+              status = 0;
+              errorMessage = 'ไม่มีข้อมูลเลขห้องนี้ในระบบ';
+              invalidCount++;
+            } else {
+              validCount++;
+              totalPriceSum += priceValue;
+            }
+          } else {
+            validCount++;
+            totalPriceSum += priceValue;
+          }
         }
       }
 
