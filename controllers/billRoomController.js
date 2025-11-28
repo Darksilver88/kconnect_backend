@@ -380,7 +380,7 @@ export const getBillRoomAppList = async (req, res) => {
       FROM ${TABLE_INFORMATION} br
       INNER JOIN bill_information b ON br.bill_id = b.id
       ${whereClause}
-      ORDER BY b.expire_date DESC, br.id DESC
+      ORDER BY br.create_date DESC
       LIMIT ${limitNum} OFFSET ${offset}
     `;
 
@@ -392,8 +392,11 @@ export const getBillRoomAppList = async (req, res) => {
       const totalPrice = parseFloat(row.total_price);
       row.total_price_formatted = `฿${formatNumber(totalPrice)}`;
 
-      // Add status_formatted (no overdue check for list view)
-      row.status_formatted = getStatusObject(row.status, false);
+      // Check if overdue (status 0 and current date > expire_date)
+      const isOverdue = row.status === 0 && row.expire_date && new Date() > new Date(row.expire_date);
+
+      // Add status_formatted with overdue check
+      row.status_formatted = getStatusObject(row.status, isOverdue);
 
       // Add update_date_app_formatted (short format: "14 มิ.ย. 2025")
       row.update_date_app_formatted = formatDateForAppShort(row.update_date);
