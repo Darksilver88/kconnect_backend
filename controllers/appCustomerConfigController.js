@@ -320,11 +320,11 @@ export const updateAppCustomerConfig = async (req, res) => {
 
 /**
  * Get app customer config list with pagination
- * GET /api/app_customer_config/list?page=1&limit=10&customer_id=xxx&is_active=true
+ * GET /api/app_customer_config/list?page=1&limit=10&customer_id=xxx&is_active=true&config_key=xxx
  */
 export const getAppCustomerConfigList = async (req, res) => {
   try {
-    const { page = 1, limit = 10, customer_id, is_active } = req.query;
+    const { page = 1, limit = 10, customer_id, is_active, config_key } = req.query;
 
     const pageNum = parseInt(page) || 1;
     const limitNum = parseInt(limit) || 10;
@@ -339,6 +339,12 @@ export const getAppCustomerConfigList = async (req, res) => {
     if (customer_id && customer_id.trim() !== '') {
       whereClause += ' AND customer_id = ?';
       queryParams.push(customer_id.trim());
+    }
+
+    // Filter by config_key
+    if (config_key && config_key.trim() !== '') {
+      whereClause += ' AND config_key = ?';
+      queryParams.push(config_key.trim());
     }
 
     // Filter by is_active
