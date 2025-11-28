@@ -9,7 +9,7 @@ const TABLE_TRANSACTION_TYPE = 'bill_transaction_type_information';
  * POST /api/bill_transaction/insert
  * Body: {
  *   bill_room_id: INT (required),
- *   member_id: INT (required) - ID of member who paid,
+ *   member_id: INT (optional) - ID of member who paid, auto-find from house_no if not provided,
  *   bill_transaction_type_id: INT (required) - ID from bill_transaction_type_information,
  *   transaction_amount: DECIMAL (required) - จำนวนเงินที่ชำระ,
  *   pay_date: TIMESTAMP (required) - วันที่ชำระ,
@@ -22,12 +22,11 @@ const TABLE_TRANSACTION_TYPE = 'bill_transaction_type_information';
 export const insertBillTransaction = async (req, res) => {
   try {
     const db = getDatabase();
-    const { bill_room_id, member_id, bill_transaction_type_id, transaction_amount, pay_date, transaction_type_json, remark, customer_id, uid } = req.body;
+    let { bill_room_id, member_id, bill_transaction_type_id, transaction_amount, pay_date, transaction_type_json, remark, customer_id, uid } = req.body;
 
-    // Validate required fields
+    // Validate required fields (member_id is now optional)
     const requiredFields = [];
     if (!bill_room_id) requiredFields.push('bill_room_id');
-    if (!member_id) requiredFields.push('member_id');
     if (!bill_transaction_type_id) requiredFields.push('bill_transaction_type_id');
     if (!transaction_amount) requiredFields.push('transaction_amount');
     if (!pay_date) requiredFields.push('pay_date');
@@ -41,6 +40,42 @@ export const insertBillTransaction = async (req, res) => {
         message: `กรุณากรอกข้อมูลที่จำเป็น: ${requiredFields.join(', ')}`,
         required: requiredFields
       });
+    }
+
+    // If member_id is not provided, auto-find it from bill_room_information and member_information
+    if (!member_id) {
+      // Step 1: Get house_no from bill_room_information
+      const [billRoomRows] = await db.execute(
+        'SELECT house_no FROM bill_room_information WHERE id = ? AND customer_id = ? AND status != 2',
+        [bill_room_id, customer_id]
+      );
+
+      if (billRoomRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Bill room not found',
+          message: 'ไม่พบรายการบิลนี้ในระบบ'
+        });
+      }
+
+      const houseNo = billRoomRows[0].house_no;
+
+      // Step 2: Get oldest member_id from member_information
+      const [memberRows] = await db.execute(
+        'SELECT id FROM member_information WHERE house_no = ? AND customer_id = ? AND status != 2 ORDER BY create_date ASC LIMIT 1',
+        [houseNo, customer_id]
+      );
+
+      if (memberRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Member not found',
+          message: `ไม่พบสมาชิกสำหรับห้อง ${houseNo} ในระบบ`
+        });
+      }
+
+      member_id = memberRows[0].id;
+      logger.info(`Auto-found member_id ${member_id} for house_no ${houseNo}`);
     }
 
     // Validate transaction_amount is a positive number
