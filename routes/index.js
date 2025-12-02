@@ -16,6 +16,7 @@ import paymentTypeRoutes from './paymentType.js';
 import dashboardRoutes from './dashboard.js';
 import bankRoutes from './bank.js';
 import appCustomerConfigRoutes from './appCustomerConfig.js';
+import appConfigRoutes from './appConfig.js';
 
 const router = express.Router();
 
@@ -46,5 +47,6 @@ router.use('/payment_type', paymentTypeRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/bank', bankRoutes);
 router.use('/app_customer_config', appCustomerConfigRoutes);
+router.use('/', appConfigRoutes);
 
 export default router;
