@@ -13,7 +13,7 @@ export const getAppConfig = async (req, res) => {
       SELECT config_key, config_value, data_type, description, is_active, update_date, update_by
       FROM app_config
       WHERE is_active = 1
-      ORDER BY config_key ASC
+      ORDER BY id ASC
     `;
 
     const [rows] = await db.execute(query);
