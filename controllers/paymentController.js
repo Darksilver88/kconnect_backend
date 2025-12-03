@@ -3,10 +3,31 @@ import logger from '../utils/logger.js';
 import { addFormattedDatesToList } from '../utils/dateFormatter.js';
 import { formatPrice } from '../utils/numberFormatter.js';
 import { getFileUrl } from '../utils/storageManager.js';
+import { getFirestore } from '../config/firebase.js';
 import ExcelJS from 'exceljs';
 
 const MENU = 'payment';
 const TABLE_INFORMATION = `${MENU}_information`;
+
+// Helper function to get master bank list from Firebase
+async function getMasterBankListData() {
+  try {
+    const db = getFirestore();
+    const docRef = db.collection('kconnect_config').doc('config').collection('niti_config').doc('config');
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      logger.warn('Master bank list not found in Firebase');
+      return [];
+    }
+
+    const data = doc.data();
+    return data.bank_list || [];
+  } catch (error) {
+    logger.error('Error fetching master bank list:', error);
+    return [];
+  }
+}
 
 export const insertPayment = async (req, res) => {
   try {
@@ -658,7 +679,7 @@ export const getPaymentDetail = async (req, res) => {
     const db = getDatabase();
 
     const detailQuery = `
-      SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark, p.member_remark,
+      SELECT p.id, p.upload_key, p.payable_type, p.payable_id, p.payment_amount, p.payment_type_id, p.customer_id, p.status, p.member_id, p.remark, p.member_remark, p.bank_id,
              p.create_date, p.create_by, p.update_date, p.update_by, p.delete_date, p.delete_by,
              CONCAT(m.prefix_name, m.full_name) as member_name,
              m.full_name as member_real_name,
@@ -700,6 +721,15 @@ export const getPaymentDetail = async (req, res) => {
     }
     if (formattedData.bill_total_price !== undefined && formattedData.bill_total_price !== null) {
       formattedData.bill_total_price = formatPrice(parseFloat(formattedData.bill_total_price));
+    }
+
+    // Add bank_name if bank_id exists
+    if (formattedData.bank_id) {
+      const masterBankList = await getMasterBankListData();
+      const bankData = masterBankList.find(bank => bank.id === formattedData.bank_id);
+      formattedData.bank_name = bankData?.name || '-';
+    } else {
+      formattedData.bank_name = null;
     }
 
     // Get latest payment attachment

@@ -386,6 +386,37 @@ export const getBillRoomAppList = async (req, res) => {
 
     const [rows] = await db.execute(dataQuery, queryParams);
 
+    // Get bill transaction types for each bill_room (latest transaction)
+    const billRoomIds = rows.map(r => r.id);
+    let transactionTypeMap = {};
+
+    if (billRoomIds.length > 0) {
+      const placeholders = billRoomIds.map(() => '?').join(',');
+      const transactionQuery = `
+        SELECT
+          bt.bill_room_id,
+          bt.bill_transaction_type_id,
+          btt.title as bill_transaction_type_title
+        FROM bill_transaction_information bt
+        LEFT JOIN bill_transaction_type_information btt ON bt.bill_transaction_type_id = btt.id
+        WHERE bt.bill_room_id IN (${placeholders})
+          AND bt.status != 2
+        ORDER BY bt.create_date DESC
+      `;
+
+      const [transactionRows] = await db.execute(transactionQuery, billRoomIds);
+
+      // Create map: bill_room_id -> latest transaction type
+      transactionRows.forEach(tx => {
+        if (!transactionTypeMap[tx.bill_room_id]) {
+          transactionTypeMap[tx.bill_room_id] = {
+            bill_transaction_type_id: tx.bill_transaction_type_id,
+            bill_transaction_type_title: tx.bill_transaction_type_title
+          };
+        }
+      });
+    }
+
     // Add formatted dates and additional fields
     const formattedRows = addFormattedDatesToList(rows, ['create_date', 'update_date', 'delete_date', 'expire_date']).map(row => {
       // Add total_price_formatted
@@ -403,6 +434,22 @@ export const getBillRoomAppList = async (req, res) => {
 
       // Add expire_date_app_formatted (short format: "14 มิ.ย. 2025")
       row.expire_date_app_formatted = formatDateForAppShort(row.expire_date);
+
+      // Add bill_transaction_type if exists
+      const transactionType = transactionTypeMap[row.id];
+      if (transactionType) {
+        row.bill_transaction_type_id = transactionType.bill_transaction_type_id;
+        row.bill_transaction_type_title = transactionType.bill_transaction_type_title;
+      } else {
+        // If no transaction but status = 5 (รอตรวจสอบ), set special values
+        if (row.status === 5) {
+          row.bill_transaction_type_id = -1;
+          row.bill_transaction_type_title = 'โอนเงินแล้วแนบสลิป';
+        } else {
+          row.bill_transaction_type_id = null;
+          row.bill_transaction_type_title = null;
+        }
+      }
 
       return row;
     });
@@ -542,6 +589,9 @@ export const getBillRoomDetail = async (req, res) => {
 
     const [transactionRows] = await db.execute(transactionsQuery, [parseInt(id)]);
 
+    // Get master bank list from Firebase for transactions
+    const masterBankList = await getMasterBankListData();
+
     // Format transaction dates and parse JSON
     const formattedTransactions = transactionRows.map(tx => {
       const formatted = addFormattedDates(tx, ['pay_date', 'transaction_date', 'create_date']);
@@ -549,11 +599,19 @@ export const getBillRoomDetail = async (req, res) => {
       // Parse transaction_type_json if exists
       if (formatted.transaction_type_json) {
         try {
-          formatted.transaction_type_json_parsed = JSON.parse(formatted.transaction_type_json);
+          formatted.transaction_type_json = JSON.parse(formatted.transaction_type_json);
+          formatted.transaction_type_json_parsed = null;
         } catch (error) {
           logger.warn(`Failed to parse transaction_type_json for transaction ${tx.id}`);
           formatted.transaction_type_json_parsed = null;
         }
+      }
+
+      // Add bank_name if bill_transaction_type_id = 2
+      if (formatted.bill_transaction_type_id === 2 && formatted.transaction_type_json?.transfer_bank) {
+        const transferBankId = parseInt(formatted.transaction_type_json.transfer_bank);
+        const bankData = masterBankList.find(bank => bank.id === transferBankId);
+        formatted.transaction_type_json.bank_name = bankData?.name || '-';
       }
 
       return formatted;
@@ -598,10 +656,7 @@ export const getBillRoomDetail = async (req, res) => {
     let paymentList = [];
 
     if (paymentRows.length > 0) {
-      // Get master bank list from Firebase
-      const masterBankList = await getMasterBankListData();
-
-      // Process payment list with attachments and bank data
+      // Process payment list with attachments and bank data (reuse masterBankList from above)
       paymentList = await Promise.all(
         paymentRows.map(async (payment) => {
         // Format dates

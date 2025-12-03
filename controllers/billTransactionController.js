@@ -113,12 +113,15 @@ export const insertBillTransaction = async (req, res) => {
 
     // Parse and validate transaction_type_json JSON
     let transactionTypeJsonString = null;
+    let transactionTypeJsonObject = null;
     if (transaction_type_json) {
       try {
         // If it's already an object, stringify it. If it's a string, parse then stringify
         if (typeof transaction_type_json === 'string') {
-          transactionTypeJsonString = JSON.stringify(JSON.parse(transaction_type_json));
+          transactionTypeJsonObject = JSON.parse(transaction_type_json);
+          transactionTypeJsonString = JSON.stringify(transactionTypeJsonObject);
         } else if (typeof transaction_type_json === 'object') {
+          transactionTypeJsonObject = transaction_type_json;
           transactionTypeJsonString = JSON.stringify(transaction_type_json);
         }
       } catch (error) {
@@ -165,6 +168,15 @@ export const insertBillTransaction = async (req, res) => {
       newBillRoomStatus = 1; // paid
     }
 
+    // Extract bank_id from transaction_type_json if bill_transaction_type_id = 2
+    let bankId = null;
+    if (transactionTypeJsonObject?.bill_transaction_type_id === 2 && transactionTypeJsonObject?.transfer_bank) {
+      bankId = parseInt(transactionTypeJsonObject.transfer_bank);
+      if (isNaN(bankId)) {
+        bankId = null;
+      }
+    }
+
     // Step 1: Insert payment_information first (manual entry, no slip)
     const { randomBytes } = await import('crypto');
     const uploadKey = randomBytes(16).toString('hex'); // Generate 32-char upload_key
@@ -172,7 +184,7 @@ export const insertBillTransaction = async (req, res) => {
     const insertPaymentQuery = `
       INSERT INTO payment_information
       (upload_key, payable_type, payable_id, payment_amount, payment_type_id, customer_id, status, member_id, remark, member_remark, payment_date, bank_id, create_by, update_date, update_by)
-      VALUES (?, 'bill_room_information', ?, ?, 3, ?, 1, ?, ?, NULL, ?, NULL, ?, NOW(), ?)
+      VALUES (?, 'bill_room_information', ?, ?, 3, ?, 1, ?, ?, NULL, ?, ?, ?, NOW(), ?)
     `;
 
     const [paymentResult] = await db.execute(insertPaymentQuery, [
@@ -183,6 +195,7 @@ export const insertBillTransaction = async (req, res) => {
       member_id,
       remark || null,
       pay_date,
+      bankId,
       uid,
       uid
     ]);
