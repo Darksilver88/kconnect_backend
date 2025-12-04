@@ -835,8 +835,8 @@ function formatDateDDMMYYYY(date) {
 
 // Helper function to get status object
 function getStatusObject(statusId, isOverdue = false) {
-  // If status is 0 or 5 and overdue, change to status 3
-  if ((statusId === 0 || statusId === 5) && isOverdue) {
+  // If status is 0 and overdue, change to status 3 (but NOT for status 1 or 5)
+  if (statusId === 0 && isOverdue) {
     return {
       id: 3,
       text: 'เกินกำหนด',
