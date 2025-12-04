@@ -41,6 +41,40 @@ function formatExpireDate(dateInput) {
 }
 
 /**
+ * Helper function to send bill notifications
+ * Note: insertNotificationAuditForBill will format each notification per bill_room internally
+ *
+ * @param {Object} db - Database connection
+ * @param {number} billId - Bill ID
+ * @param {string} customerId - Customer ID
+ * @param {number} userId - User ID
+ * @param {string} originalTitle - Original bill title
+ * @param {string} originalDetail - Original bill detail
+ * @param {string} expireDate - Expire date
+ * @param {string} action - Action description (e.g., 'ส่งบิล')
+ */
+async function sendBillNotifications(db, billId, customerId, userId, originalTitle, originalDetail, expireDate, action) {
+  try {
+    // Send notification (insertNotificationAuditForBill will format for each bill_room internally)
+    await insertNotificationAuditForBill(
+      db,
+      billId,
+      customerId,
+      userId,
+      originalTitle,   // Original title (will be formatted per bill_room)
+      originalDetail,  // Original detail (will be formatted per bill_room)
+      expireDate,
+      action
+    );
+
+    logger.info(`Sent notifications for bill_id=${billId}`);
+  } catch (error) {
+    logger.error(`Error sending notifications for bill_id=${billId}:`, error);
+    throw error;
+  }
+}
+
+/**
  * Helper function to insert bill audit log
  * @param {Object} db - Database connection
  * @param {number} billId - Bill ID
@@ -223,8 +257,13 @@ export const updateBill = async (req, res) => {
       }
     }
 
-    // Check current status to determine if we need to set send_date
-    const checkQuery = `SELECT status, send_date, customer_id FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    // Check current status to determine if we need to set send_date, and get bill_type_title
+    const checkQuery = `
+      SELECT b.status, b.send_date, b.customer_id, b.bill_type_id, bt.title as bill_type_title
+      FROM ${TABLE_INFORMATION} b
+      LEFT JOIN ${TABLE_TYPE} bt ON b.bill_type_id = bt.id
+      WHERE b.id = ? AND b.status != 2
+    `;
     const [currentRows] = await db.execute(checkQuery, [id]);
 
     if (currentRows.length === 0) {
@@ -238,6 +277,7 @@ export const updateBill = async (req, res) => {
     const currentStatus = currentRows[0].status;
     const currentSendDate = currentRows[0].send_date;
     const billCustomerId = currentRows[0].customer_id;
+    const billTypeTitle = currentRows[0].bill_type_title || title;
 
     // Start transaction
     await db.query('START TRANSACTION');
@@ -338,7 +378,7 @@ export const updateBill = async (req, res) => {
       // แต่ไม่รวม 1 -> 1 (user แค่แก้ข้อมูลอื่น)
       if (currentStatus !== 1 && parseInt(status) === 1) {
         try {
-          await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, title, detail, expire_date, 'ส่งบิล');
+          await sendBillNotifications(db, parseInt(id), billCustomerId, uid, billTypeTitle, detail, expire_date, 'ส่งบิล');
           logger.info(`Bill ${id} status changed to sent (${currentStatus} -> 1), notification audit created`);
         } catch (notifError) {
           // Log error but don't fail the update
@@ -395,8 +435,13 @@ export const sendBill = async (req, res) => {
 
     const db = getDatabase();
 
-    // Check if bill exists and get current status, customer_id, title, detail, expire_date
-    const checkQuery = `SELECT status, customer_id, title, detail, expire_date FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    // Check if bill exists and get current status, customer_id, title, detail, expire_date, bill_type_title
+    const checkQuery = `
+      SELECT b.status, b.customer_id, b.title, b.detail, b.expire_date, b.bill_type_id, bt.title as bill_type_title
+      FROM ${TABLE_INFORMATION} b
+      LEFT JOIN ${TABLE_TYPE} bt ON b.bill_type_id = bt.id
+      WHERE b.id = ? AND b.status != 2
+    `;
     const [currentRows] = await db.execute(checkQuery, [id]);
 
     if (currentRows.length === 0) {
@@ -410,6 +455,7 @@ export const sendBill = async (req, res) => {
     const currentStatus = currentRows[0].status;
     const billCustomerId = currentRows[0].customer_id;
     const billTitle = currentRows[0].title;
+    const billTypeTitle = currentRows[0].bill_type_title || billTitle;
     const billDetail = currentRows[0].detail;
     const billExpireDate = currentRows[0].expire_date;
 
@@ -438,7 +484,7 @@ export const sendBill = async (req, res) => {
     // Insert notification audit for all bill_rooms
     // เมื่อส่งบิล (status → 1) ต้องบันทึกการแจ้งเตือน
     try {
-      await insertNotificationAuditForBill(db, parseInt(id), billCustomerId, uid, billTitle, billDetail, billExpireDate, 'ส่งบิล');
+      await sendBillNotifications(db, parseInt(id), billCustomerId, uid, billTypeTitle, billDetail, billExpireDate, 'ส่งบิล');
       logger.info(`Bill ${id} sent, notification audit created`);
     } catch (notifError) {
       // Log error but don't fail the send operation
@@ -1014,6 +1060,13 @@ export const insertBillWithExcel = async (req, res) => {
       // Insert bill audit log
       await insertBillAudit(db, billId, parseInt(status), uid);
 
+      // Query bill_type_title for notification
+      const [billTypeRows] = await db.execute(
+        'SELECT title FROM bill_type_information WHERE id = ?',
+        [billTypeIdValue]
+      );
+      const billTypeTitle = billTypeRows.length > 0 ? billTypeRows[0].title : title;
+
       // Step 9: Generate initial bill_no for bill_room_information with row locking
       const pattern = `INV-${year}-${datePrefix}-%`;
 
@@ -1078,7 +1131,7 @@ export const insertBillWithExcel = async (req, res) => {
       // ถ้าสร้างบิลพร้อมส่ง (status = 1) ให้บันทึกการแจ้งเตือน
       if (parseInt(status) === 1) {
         try {
-          await insertNotificationAuditForBill(db, billId, customer_id?.trim(), uid, title, detail, expire_date, 'สร้างและส่งบิล');
+          await sendBillNotifications(db, billId, customer_id?.trim(), uid, billTypeTitle, detail, expire_date, 'สร้างและส่งบิล');
           logger.info(`Bill ${billId} created with sent status, notification audit created for ${validatedRows.length} rooms`);
         } catch (notifError) {
           // Log error but don't fail the insert
@@ -2341,11 +2394,12 @@ export const sendNotificationEach = async (req, res) => {
 
     const db = getDatabase();
 
-    // Query bill title, detail, and expire_date from bill_room_information → bill_information
+    // Query bill title, detail, expire_date, and bill_type_title from bill_room_information → bill_information
     const billQuery = `
-      SELECT b.title, b.detail, b.expire_date
+      SELECT b.title, b.detail, b.expire_date, b.bill_type_id, bt.title as bill_type_title
       FROM bill_room_information br
       INNER JOIN bill_information b ON br.bill_id = b.id
+      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
       WHERE br.id = ? AND br.customer_id = ? AND br.status != 2
     `;
     const [billRows] = await db.execute(billQuery, [parseInt(id), customer_id]);
@@ -2359,6 +2413,7 @@ export const sendNotificationEach = async (req, res) => {
     }
 
     const billTitle = billRows[0].title;
+    const billTypeTitle = billRows[0].bill_type_title || billTitle;
     const billDetail = billRows[0].detail;
     const billExpireDate = billRows[0].expire_date;
 
@@ -2409,13 +2464,14 @@ export const sendNotificationEach = async (req, res) => {
 
     // Call helper function to insert notification audit
     // mode='bill_room' creates notification for single bill_room only
+    // insertNotificationAuditForBill will format the notification internally
     const insertedCount = await insertNotificationAuditForBill(
       db,
       parseInt(id),      // bill_room_id
       customer_id,
       uid,
-      billTitle,         // title from bill_information
-      billDetail,        // detail from bill_information
+      billTypeTitle,     // bill_type title (will be formatted per bill_room)
+      billDetail,        // original detail (will be formatted per bill_room)
       billExpireDate,    // expire_date from bill_information
       'ส่งอีกครั้ง',     // remark
       { mode: 'bill_room' }

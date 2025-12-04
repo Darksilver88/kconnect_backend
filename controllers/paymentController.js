@@ -5,6 +5,8 @@ import { formatPrice } from '../utils/numberFormatter.js';
 import { getFileUrl } from '../utils/storageManager.js';
 import { getFirestore } from '../config/firebase.js';
 import ExcelJS from 'exceljs';
+import { insertNotificationAudit } from '../utils/notificationHelper.js';
+import { getCustomerNameByCode, batchInsertNotificationsToFirebase } from '../utils/firebaseNotificationHelper.js';
 
 const MENU = 'payment';
 const TABLE_INFORMATION = `${MENU}_information`;
@@ -184,11 +186,17 @@ export const updatePayment = async (req, res) => {
       failed: []
     };
 
+    // Step 1: Query customer name from Firebase (once for all payments)
+    let customerName = null;
+    let customer_id_for_notification = null;
+
+    const allNotificationsForFirebase = []; // Collect all notifications for batch insert
+
     for (const id of ids) {
       try {
-        // Check if payment exists and status is 0, also get payable info
+        // Check if payment exists and status is 0, also get payable info and customer_id
         const checkQuery = `
-          SELECT id, status, payable_type, payable_id FROM ${TABLE_INFORMATION}
+          SELECT id, status, payable_type, payable_id, customer_id FROM ${TABLE_INFORMATION}
           WHERE id = ? AND status != 2
         `;
         const [rows] = await db.execute(checkQuery, [id]);
@@ -227,6 +235,16 @@ export const updatePayment = async (req, res) => {
         ]);
 
         if (result.affectedRows > 0) {
+          // Query customer name for Firebase once (if not queried yet)
+          if (!customerName && paymentData.customer_id) {
+            customer_id_for_notification = paymentData.customer_id;
+            customerName = await getCustomerNameByCode(paymentData.customer_id);
+            if (!customerName) {
+              logger.error(`Cannot insert notification to Firebase: customer not found for customer_id=${paymentData.customer_id}`);
+              // Continue with MySQL insert, but skip Firebase
+            }
+          }
+
           // ถ้าปฏิเสธ (status = 3) และเป็น bill_room_information ให้เปลี่ยน bill_room status กลับเป็น 0
           if (statusValue === 3 && paymentData.payable_type === 'bill_room_information') {
             try {
@@ -237,6 +255,82 @@ export const updatePayment = async (req, res) => {
               `;
               await db.execute(updateBillRoomStatusQuery, [uid, paymentData.payable_id]);
               logger.info(`Rejected payment id=${id}: Updated bill_room_information id=${paymentData.payable_id} status back to 0 (รอชำระ)`);
+
+              // Send rejection notification
+              try {
+                // Get bill_room and bill information for notification
+                const getBillInfoQuery = `
+                  SELECT br.id, br.bill_no, br.house_no, br.customer_id,
+                         b.detail as bill_detail, b.bill_type_id,
+                         bt.title as bill_type_title
+                  FROM bill_room_information br
+                  LEFT JOIN bill_information b ON br.bill_id = b.id
+                  LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+                  WHERE br.id = ? AND br.status != 2
+                `;
+                const [billInfoRows] = await db.execute(getBillInfoQuery, [paymentData.payable_id]);
+
+                if (billInfoRows.length > 0) {
+                  const billInfo = billInfoRows[0];
+
+                  // Format rejection notification
+                  const notificationTitle = `📋 ❌ ไม่อนุมัติการชำระบิล${billInfo.bill_type_title || ''}`;
+                  const notificationDetail = `${billInfo.bill_detail || ''} : ${billInfo.bill_no} ไม่ผ่านการอนุมัติจากนิติ กรุณาดำเนินการใหม่อีกครั้ง`;
+
+                  // Find all members by house_no and customer_id
+                  const memberQuery = `
+                    SELECT user_ref
+                    FROM member_information
+                    WHERE customer_id = ?
+                      AND house_no = ?
+                      AND status != 2
+                  `;
+
+                  const [memberRows] = await db.execute(memberQuery, [billInfo.customer_id, billInfo.house_no]);
+
+                  if (memberRows.length > 0) {
+                    logger.debug(`Found ${memberRows.length} member(s) for bill_room_id=${paymentData.payable_id}, house_no=${billInfo.house_no}`);
+
+                    // Create notification for each member
+                    for (const member of memberRows) {
+                      let receiver = null;
+
+                      if (member.user_ref) {
+                        const userRefParts = member.user_ref.split('/');
+                        receiver = userRefParts[userRefParts.length - 1];
+                        logger.debug(`Found receiver ${receiver} for bill_room_id=${paymentData.payable_id}`);
+                      }
+
+                      // Insert notification for this member
+                      const notifResult = await insertNotificationAudit(
+                        db,
+                        'bill_room_information',
+                        [paymentData.payable_id],
+                        billInfo.customer_id,
+                        uid,
+                        {
+                          remark: 'ไม่อนุมัติการชำระบิล',
+                          title: notificationTitle,
+                          detail: notificationDetail,
+                          topic: 'billing',
+                          type: 'billing',
+                          receiver
+                        }
+                      );
+
+                      // Collect notification data for Firebase batch insert
+                      if (notifResult.notificationsForFirebase) {
+                        allNotificationsForFirebase.push(...notifResult.notificationsForFirebase);
+                      }
+                    }
+
+                    logger.info(`Payment rejection notification sent for bill_room_id=${paymentData.payable_id} to ${memberRows.length} member(s)`);
+                  }
+                }
+              } catch (notifError) {
+                logger.error('Failed to insert payment rejection notification:', notifError);
+              }
+
             } catch (billRoomError) {
               logger.error(`Failed to update bill_room_information status for id=${paymentData.payable_id}:`, billRoomError);
               // ไม่ต้อง fail ทั้งหมด เพียงแค่ log error
@@ -303,6 +397,83 @@ export const updatePayment = async (req, res) => {
                 await db.execute(updateBillRoomQuery, [newBillRoomStatus, uid, paymentData.payable_id]);
 
                 logger.info(`Approved payment id=${id}: Created transaction, updated bill_room_information id=${paymentData.payable_id} status=${newBillRoomStatus} (${transactionType} payment)`);
+
+                // Send approval notification (only if status changed to 1 = paid)
+                if (newBillRoomStatus === 1) {
+                  try {
+                    // Get bill_room and bill information for notification
+                    const getBillInfoQuery = `
+                      SELECT br.id, br.bill_no, br.house_no, br.customer_id,
+                             b.detail as bill_detail, b.bill_type_id,
+                             bt.title as bill_type_title
+                      FROM bill_room_information br
+                      LEFT JOIN bill_information b ON br.bill_id = b.id
+                      LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+                      WHERE br.id = ? AND br.status != 2
+                    `;
+                    const [billInfoRows] = await db.execute(getBillInfoQuery, [paymentData.payable_id]);
+
+                    if (billInfoRows.length > 0) {
+                      const billInfo = billInfoRows[0];
+
+                      // Format approval notification
+                      const notificationTitle = `📋 ✅ อนุมัติการชำระบิล${billInfo.bill_type_title || ''}`;
+                      const notificationDetail = `${billInfo.bill_detail || ''} : ${billInfo.bill_no} ได้รับอนุมัติการชำระจากนิติแล้ว`;
+
+                      // Find all members by house_no and customer_id
+                      const memberQuery = `
+                        SELECT user_ref
+                        FROM member_information
+                        WHERE customer_id = ?
+                          AND house_no = ?
+                          AND status != 2
+                      `;
+
+                      const [memberRows] = await db.execute(memberQuery, [billInfo.customer_id, billInfo.house_no]);
+
+                      if (memberRows.length > 0) {
+                        logger.debug(`Found ${memberRows.length} member(s) for bill_room_id=${paymentData.payable_id}, house_no=${billInfo.house_no}`);
+
+                        // Create notification for each member
+                        for (const member of memberRows) {
+                          let receiver = null;
+
+                          if (member.user_ref) {
+                            const userRefParts = member.user_ref.split('/');
+                            receiver = userRefParts[userRefParts.length - 1];
+                            logger.debug(`Found receiver ${receiver} for bill_room_id=${paymentData.payable_id}`);
+                          }
+
+                          // Insert notification for this member
+                          const notifResult = await insertNotificationAudit(
+                            db,
+                            'bill_room_information',
+                            [paymentData.payable_id],
+                            billInfo.customer_id,
+                            uid,
+                            {
+                              remark: 'อนุมัติการชำระบิล',
+                              title: notificationTitle,
+                              detail: notificationDetail,
+                              topic: 'billing',
+                              type: 'billing',
+                              receiver
+                            }
+                          );
+
+                          // Collect notification data for Firebase batch insert
+                          if (notifResult.notificationsForFirebase) {
+                            allNotificationsForFirebase.push(...notifResult.notificationsForFirebase);
+                          }
+                        }
+
+                        logger.info(`Payment approval notification sent for bill_room_id=${paymentData.payable_id} to ${memberRows.length} member(s)`);
+                      }
+                    }
+                  } catch (notifError) {
+                    logger.error('Failed to insert payment approval notification:', notifError);
+                  }
+                }
               }
             } catch (billRoomError) {
               logger.error(`Failed to process bill_room_information id=${paymentData.payable_id}:`, billRoomError);
@@ -328,6 +499,19 @@ export const updatePayment = async (req, res) => {
           reason: error.message
         });
       }
+    }
+
+    // Step 2: Batch insert to Firebase (after all payments processed)
+    if (customerName && allNotificationsForFirebase.length > 0) {
+      try {
+        const firebaseResult = await batchInsertNotificationsToFirebase(allNotificationsForFirebase, customerName);
+        logger.info(`Firebase batch insert completed: ${firebaseResult.success} success, ${firebaseResult.failed} failed`);
+      } catch (firebaseError) {
+        // Log error but don't fail the MySQL operation
+        logger.error('Firebase batch insert failed:', firebaseError);
+      }
+    } else if (customer_id_for_notification && !customerName) {
+      logger.warn(`Skipping Firebase insert: customer name not found for customer_id=${customer_id_for_notification}`);
     }
 
     res.json({

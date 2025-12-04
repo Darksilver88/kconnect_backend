@@ -1,6 +1,8 @@
 import { getDatabase } from '../config/database.js';
 import logger from '../utils/logger.js';
 import { addFormattedDates, addFormattedDatesToList } from '../utils/dateFormatter.js';
+import { insertNotificationAudit } from '../utils/notificationHelper.js';
+import { getCustomerNameByCode, batchInsertNotificationsToFirebase } from '../utils/firebaseNotificationHelper.js';
 
 const TABLE_TRANSACTION_TYPE = 'bill_transaction_type_information';
 
@@ -133,9 +135,15 @@ export const insertBillTransaction = async (req, res) => {
       }
     }
 
-    // Check if bill_room_id exists and not deleted
+    // Check if bill_room_id exists and get bill information for notification
     const [billRoomRows] = await db.execute(
-      'SELECT id, total_price, status FROM bill_room_information WHERE id = ? AND status != 2',
+      `SELECT br.id, br.total_price, br.status, br.bill_no, br.bill_id, br.house_no,
+              b.detail as bill_detail, b.bill_type_id,
+              bt.title as bill_type_title
+       FROM bill_room_information br
+       LEFT JOIN bill_information b ON br.bill_id = b.id
+       LEFT JOIN bill_type_information bt ON b.bill_type_id = bt.id
+       WHERE br.id = ? AND br.status != 2`,
       [bill_room_id]
     );
 
@@ -229,6 +237,93 @@ export const insertBillTransaction = async (req, res) => {
     );
 
     logger.info(`Bill transaction inserted: transaction_id=${result.insertId}, payment_id=${paymentId}, bill_room_id=${bill_room_id}, amount=${amountValue}, type=${transactionType}, new_status=${newBillRoomStatus}, by user=${uid}`);
+
+    // Send notification if status changed to 1 (paid)
+    if (newBillRoomStatus === 1) {
+      try {
+        // Step 1: Query customer name from Firebase
+        const customerName = await getCustomerNameByCode(customer_id);
+        if (!customerName) {
+          logger.error(`Cannot insert notification to Firebase: customer not found for customer_id=${customer_id}`);
+          // Continue with MySQL insert, but skip Firebase
+        }
+
+        // Format notification title and detail
+        const notificationTitle = `📋 ✅ อนุมัติการชำระบิล${billRoom.bill_type_title || ''}`;
+        const notificationDetail = `${billRoom.bill_detail || ''} : ${billRoom.bill_no} ได้รับอนุมัติการชำระจากนิติแล้ว`;
+
+        // Find all members by house_no and customer_id
+        const memberQuery = `
+          SELECT user_ref
+          FROM member_information
+          WHERE customer_id = ?
+            AND house_no = ?
+            AND status != 2
+        `;
+
+        const [memberRows] = await db.execute(memberQuery, [customer_id, billRoom.house_no]);
+
+        if (memberRows.length > 0) {
+          logger.debug(`Found ${memberRows.length} member(s) for bill_room_id=${bill_room_id}, house_no=${billRoom.house_no}`);
+
+          const allNotificationsForFirebase = []; // Collect all notifications for batch insert
+
+          // Create notification for each member found
+          for (const member of memberRows) {
+            let receiver = null;
+
+            if (member.user_ref) {
+              // Extract UID from user_ref (e.g., 'kconnect_users/7mEtLlUK1VfBzPMyEn5EYlH08xR2' -> '7mEtLlUK1VfBzPMyEn5EYlH08xR2')
+              const userRefParts = member.user_ref.split('/');
+              receiver = userRefParts[userRefParts.length - 1];
+              logger.debug(`Found receiver ${receiver} for bill_room_id=${bill_room_id}`);
+            }
+
+            // Insert notification for this member
+            const result = await insertNotificationAudit(
+              db,
+              'bill_room_information',
+              [bill_room_id],
+              customer_id,
+              uid,
+              {
+                remark: 'อนุมัติการชำระบิล',
+                title: notificationTitle,
+                detail: notificationDetail,
+                topic: 'billing',
+                type: 'billing',
+                receiver
+              }
+            );
+
+            // Collect notification data for Firebase batch insert
+            if (result.notificationsForFirebase) {
+              allNotificationsForFirebase.push(...result.notificationsForFirebase);
+            }
+          }
+
+          logger.info(`Payment approval notification sent for bill_room_id=${bill_room_id} to ${memberRows.length} member(s)`);
+
+          // Step 2: Batch insert to Firebase (only if we have customer name and notifications)
+          if (customerName && allNotificationsForFirebase.length > 0) {
+            try {
+              const firebaseResult = await batchInsertNotificationsToFirebase(allNotificationsForFirebase, customerName);
+              logger.info(`Firebase batch insert completed: ${firebaseResult.success} success, ${firebaseResult.failed} failed`);
+            } catch (firebaseError) {
+              // Log error but don't fail the MySQL operation
+              logger.error('Firebase batch insert failed:', firebaseError);
+            }
+          } else if (!customerName) {
+            logger.warn(`Skipping Firebase insert: customer name not found for customer_id=${customer_id}`);
+          }
+        } else {
+          logger.debug(`No members found for bill_room_id=${bill_room_id}, house_no=${billRoom.house_no}`);
+        }
+      } catch (notifError) {
+        // Log error but don't fail the transaction
+        logger.error('Failed to insert payment approval notification:', notifError);
+      }
+    }
 
     // Fetch the inserted record with formatted dates
     const [insertedRows] = await db.execute(

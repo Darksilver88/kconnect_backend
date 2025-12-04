@@ -25,6 +25,77 @@ function formatThaiDate(date) {
 }
 
 /**
+ * Get Thai month name (short version) for notification format
+ * @param {number} month - Month (0-11)
+ * @returns {string} - Thai month name (short)
+ */
+function getThaiMonthNameShort(month) {
+  const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  return months[month];
+}
+
+/**
+ * Format date for notification (format: "15 ก.ค. 2025")
+ * @param {Date|string} date - Date to format
+ * @returns {string|null} - Formatted date or null
+ */
+function formatDateForNotification(date) {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+
+  const day = d.getDate();
+  const month = getThaiMonthNameShort(d.getMonth());
+  const year = d.getFullYear();
+
+  return `${day} ${month} ${year}`;
+}
+
+/**
+ * Format number with comma separator
+ * @param {number} num - Number to format
+ * @returns {string} - Formatted number
+ */
+function formatNumber(num) {
+  if (num === null || num === undefined || isNaN(num)) return '0';
+
+  const parsedNum = parseFloat(num);
+  if (isNaN(parsedNum)) return '0';
+
+  // Check if the number is an integer
+  if (Number.isInteger(parsedNum)) {
+    return parsedNum.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
+  }
+
+  // For decimals, show up to 2 decimal places
+  return parsedNum.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  });
+}
+
+/**
+ * Format bill notification title and detail
+ * @param {string} originalTitle - Original bill title
+ * @param {string} originalDetail - Original bill detail
+ * @param {string} billNo - Bill number (e.g., "INV-2025-1204-001")
+ * @param {number} totalPrice - Total price
+ * @param {Date|string} expireDate - Expire date
+ * @returns {Object} - { title, detail }
+ */
+function formatBillNotification(originalTitle, originalDetail, billNo, totalPrice, expireDate) {
+  const title = `📋 บิล${originalTitle}ใหม่`;
+  const formattedExpireDate = formatDateForNotification(expireDate);
+  const formattedPrice = formatNumber(totalPrice);
+  const detail = `${originalDetail} : ${billNo} จำนวน ${formattedPrice} บาท กรุณาชำระภายในวันที่ ${formattedExpireDate}`;
+
+  return { title, detail };
+}
+
+/**
  * Insert notification audit records for multiple rows
  * @param {Object} db - Database connection
  * @param {string} tableName - Target table name (e.g., 'bill_room_information', 'member_information')
@@ -122,7 +193,7 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
   if (mode === 'bill_room') {
     // Query single bill_room by ID
     billRoomQuery = `
-      SELECT id, customer_id, house_no, member_name
+      SELECT id, customer_id, house_no, member_name, bill_no, total_price
       FROM bill_room_information
       WHERE id = ? AND status != 2
     `;
@@ -130,7 +201,7 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
   } else {
     // Query all bill_rooms by bill_id (default)
     billRoomQuery = `
-      SELECT id, customer_id, house_no, member_name
+      SELECT id, customer_id, house_no, member_name, bill_no, total_price
       FROM bill_room_information
       WHERE bill_id = ? AND status != 2
     `;
@@ -147,23 +218,20 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
   let insertedCount = 0;
   const allNotificationsForFirebase = []; // Collect all notifications for batch insert
 
-  // Notification values from bill_information
-  const title = billTitle || "แจ้งเตือนบิล";       // Use bill title or fallback
-
-  // Combine detail with expire_date in Thai format
-  let detail = billDetail || "กรุณาชำระบิล";
-  if (billExpireDate) {
-    const formattedExpireDate = formatThaiDate(billExpireDate);
-    if (formattedExpireDate) {
-      detail = `${detail} ครบกำหนด: ${formattedExpireDate}`;
-    }
-  }
-
   const topic = "billing";
   const type = "billing";
 
   for (const billRoom of billRoomRows) {
     try {
+      // Format notification title and detail for THIS specific bill_room
+      const { title, detail } = formatBillNotification(
+        billTitle,
+        billDetail,
+        billRoom.bill_no,
+        billRoom.total_price,
+        billExpireDate
+      );
+
       // Find all members by house_no and customer_id only
       // No longer matching on member_name - query all members in the room
       const memberQuery = `
@@ -193,11 +261,11 @@ export async function insertNotificationAuditForBill(db, billIdOrBillRoomId, cus
             logger.debug(`Found receiver ${receiver} for bill_room_id=${billRoom.id}`);
           }
 
-          // Insert notification audit with hardcoded values and dynamic receiver
+          // Insert notification audit with formatted title/detail for this bill_room
           const fullOptions = {
             remark,
-            title,
-            detail,
+            title,   // Formatted title with 📋 emoji and "ใหม่"
+            detail,  // Formatted detail with bill_no, total_price, expire_date
             topic,
             type,
             receiver
