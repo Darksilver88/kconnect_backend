@@ -2820,7 +2820,7 @@ export const getInvoice = async (req, res) => {
         </table>
 
         <!-- Payment Due Date -->
-        <p style="font-size: 11px; margin-top: 15px; font-weight: bold;">โปรดชำระค่าใช้จ่ายนี้เรียกเก็บภายในวันที่ 30/09/2567</p>
+        <p style="font-size: 11px; margin-top: 15px; font-weight: bold;">โปรดชำระค่าใช้จ่ายที่เรียกเก็บภายในวันที่ 30/09/2567</p>
 
         <!-- Notes and Payment Notice Section -->
         <div class="note-payment-section">
@@ -2848,7 +2848,7 @@ export const getInvoice = async (req, res) => {
             </div>
             <div class="qr-text">
                 <p><strong>Scan QR เพื่อดาวน์โหลด KConnect Application</strong></p>
-                <p>สะดวกสบายในเรื่องการดูค่าใช้จ่าย และ ดูโบะเสรีจำเนิน</p>
+                <p>สะดวกสบายในเรื่องการดูค่าใช้จ่าย และ ดูใบเสร็จรับเงิน</p>
             </div>
         </div>
     </div>
