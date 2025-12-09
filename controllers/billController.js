@@ -1662,7 +1662,16 @@ export const getBillRoomEachList = async (req, res) => {
     const completionPercentage = totalRecords > 0 ? Math.round((paidCount / totalRecords) * 100) : 0;
     const completionText = `${paidCount}/${totalRecords} ครั้ง (${completionPercentage}%)`;
 
-    // Get paginated data with bill information
+    // Get notification resend interval from config
+    const configQuery = `
+      SELECT config_value
+      FROM app_config
+      WHERE config_key = 'notification_resend_interval_minutes' AND is_active = TRUE
+    `;
+    const [configRows] = await db.execute(configQuery);
+    const intervalMinutes = configRows.length > 0 ? parseInt(configRows[0].config_value) : 30;
+
+    // Get paginated data with bill information + notification status
     const dataQuery = `
       SELECT
         br.id,
@@ -1675,9 +1684,29 @@ export const getBillRoomEachList = async (req, res) => {
         br.status,
         br.create_date,
         b.title as bill_title,
-        b.expire_date
+        b.expire_date,
+        na.last_notification_date,
+        TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW()) as minutes_since_last_notification,
+        CASE
+          WHEN na.last_notification_date IS NULL THEN 1
+          WHEN TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW()) >= ${intervalMinutes} THEN 1
+          ELSE 0
+        END as can_send_notification,
+        CASE
+          WHEN na.last_notification_date IS NULL THEN NULL
+          WHEN TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW()) >= ${intervalMinutes} THEN 0
+          ELSE ${intervalMinutes} - TIMESTAMPDIFF(MINUTE, na.last_notification_date, NOW())
+        END as remaining_minutes
       FROM ${TABLE_ROOM} br
       INNER JOIN ${TABLE_INFORMATION} b ON br.bill_id = b.id
+      LEFT JOIN (
+        SELECT
+          rows_id,
+          MAX(create_date) as last_notification_date
+        FROM notification_audit_information
+        WHERE table_name = 'bill_room_information'
+        GROUP BY rows_id
+      ) na ON br.id = na.rows_id
       WHERE br.house_no = ?
         AND br.customer_id = ?
         AND br.status != 2
@@ -1688,8 +1717,11 @@ export const getBillRoomEachList = async (req, res) => {
 
     const [rows] = await db.execute(dataQuery, [house_no, customer_id]);
 
+    // Format dates for items (including last_notification_date)
+    const rowsWithFormattedDates = addFormattedDatesToList(rows, ['create_date', 'last_notification_date']);
+
     // Format data with date formatting and status adjustment
-    const formattedRows = rows.map(row => {
+    const formattedRows = rowsWithFormattedDates.map(row => {
       const expireDate = new Date(row.expire_date);
       const isOverdue = currentDate > expireDate;
 
@@ -1706,7 +1738,12 @@ export const getBillRoomEachList = async (req, res) => {
         bill_title: row.bill_title,
         expire_date: formatDate(expireDate),
         total_price: formatPrice(row.total_price),
-        status: adjustedStatus
+        status: adjustedStatus,
+        last_notification_date: row.last_notification_date,
+        minutes_since_last_notification: row.minutes_since_last_notification,
+        can_send_notification: row.can_send_notification,
+        remaining_minutes: row.remaining_minutes,
+        last_notification_date_formatted: row.last_notification_date_formatted
       };
     });
 

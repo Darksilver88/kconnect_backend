@@ -67,7 +67,6 @@ export const insertBank = async (req, res) => {
     const requiredFields = [];
     if (!upload_key) requiredFields.push('upload_key');
     if (!customer_id) requiredFields.push('customer_id');
-    if (!status) requiredFields.push('status');
     if (!uid) requiredFields.push('uid');
 
     if (requiredFields.length > 0) {
@@ -78,6 +77,9 @@ export const insertBank = async (req, res) => {
         required: requiredFields
       });
     }
+
+    // Always set status to 0, ignore any value sent from request
+    const bankStatus = 0;
 
     const db = getDatabase();
 
@@ -108,12 +110,12 @@ export const insertBank = async (req, res) => {
       bank_id || null,
       bank_no || null,
       type || null,
-      parseInt(status),
+      bankStatus,
       customer_id.trim(),
       parseInt(uid)
     ]);
 
-    logger.info(`Bank inserted: ID ${result.insertId} by user ${uid}`);
+    logger.info(`Bank inserted: ID ${result.insertId} by user ${uid} with status ${bankStatus}`);
 
     res.json({
       success: true,
@@ -125,7 +127,7 @@ export const insertBank = async (req, res) => {
         bank_id,
         bank_no,
         type,
-        status: parseInt(status),
+        status: bankStatus,
         customer_id: customer_id.trim()
       },
       timestamp: new Date().toISOString()
@@ -147,7 +149,7 @@ export const insertBank = async (req, res) => {
  */
 export const getBankList = async (req, res) => {
   try {
-    const { page = 1, limit = 10, keyword, customer_id } = req.query;
+    const { page = 1, limit = 10, keyword, customer_id, is_web } = req.query;
 
     // Validate required parameters
     if (!customer_id || customer_id.trim() === '') {
@@ -165,7 +167,12 @@ export const getBankList = async (req, res) => {
 
     const db = getDatabase();
 
+    // If is_web is not provided or not "1", show only status = 1 (active banks)
+    // If is_web = 1, show all records except deleted (status != 2)
     let whereClause = 'WHERE status != 2 AND customer_id = ?';
+    if (is_web !== '1') {
+      whereClause = 'WHERE status = 1 AND customer_id = ?';
+    }
     let queryParams = [customer_id.trim()];
 
     // Keyword search (bank_account, bank_no, type)
@@ -363,8 +370,8 @@ export const updateBank = async (req, res) => {
 
     const db = getDatabase();
 
-    // Check if bank exists and get upload_key
-    const checkQuery = `SELECT id, upload_key FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
+    // Check if bank exists and get upload_key, customer_id
+    const checkQuery = `SELECT id, upload_key, customer_id FROM ${TABLE_INFORMATION} WHERE id = ? AND status != 2`;
     const [currentRows] = await db.execute(checkQuery, [parseInt(id)]);
 
     if (currentRows.length === 0) {
@@ -376,6 +383,25 @@ export const updateBank = async (req, res) => {
     }
 
     const uploadKey = currentRows[0].upload_key;
+    const customerId = currentRows[0].customer_id;
+
+    // If updating status to 1, check if another bank with same customer_id already has status = 1
+    if (status !== undefined && parseInt(status) === 1) {
+      const checkActiveQuery = `
+        SELECT id FROM ${TABLE_INFORMATION}
+        WHERE customer_id = ? AND status = 1 AND id != ? AND status != 2
+      `;
+      const [activeRows] = await db.execute(checkActiveQuery, [customerId, parseInt(id)]);
+
+      if (activeRows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Cannot set multiple active banks',
+          message: 'บัญชีธนาคารสามารถ Active ได้รายการเดียวเท่านั้น',
+          active_bank_id: activeRows[0].id
+        });
+      }
+    }
 
     // Update only the latest attachment from status=0 to status=1 for this upload_key
     const updateAttachmentQuery = `

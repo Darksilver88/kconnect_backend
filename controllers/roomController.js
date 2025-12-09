@@ -318,28 +318,43 @@ export const getSummaryData = async (req, res) => {
     const [ownerThisMonthResult] = await db.execute(ownerThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
     const ownersThisMonth = ownerThisMonthResult[0].total;
 
-    // Card 4: ผู้เช่า (Renters)
+    // Card 4: ผู้อยู่อาศัย (Livers - ไม่ใช่ tenant)
+    const liversCountQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2 AND user_level != 'tenant'
+    `;
+    const [liversCountResult] = await db.execute(liversCountQuery, [customer_id]);
+    const totalLivers = liversCountResult[0].total;
+
+    // Card 4: ผู้อยู่อาศัยที่สร้างในเดือนนี้
+    const liversThisMonthQuery = `
+      SELECT COUNT(*) as total
+      FROM member_information
+      WHERE customer_id = ? AND status != 2 AND user_level != 'tenant'
+        AND create_date >= ? AND create_date <= ?
+    `;
+    const [liversThisMonthResult] = await db.execute(liversThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
+    const liversThisMonth = liversThisMonthResult[0].total;
+
+    // Card 5: ผู้เช่า (Renters/Tenants - user_level == tenant)
     const renterCountQuery = `
       SELECT COUNT(*) as total
       FROM member_information
-      WHERE customer_id = ? AND status != 2 AND user_level != 'owner'
+      WHERE customer_id = ? AND status != 2 AND user_level = 'tenant'
     `;
     const [renterCountResult] = await db.execute(renterCountQuery, [customer_id]);
     const totalRenters = renterCountResult[0].total;
 
-    // Card 4: ผู้เช่าที่สร้างในเดือนนี้
+    // Card 5: ผู้เช่าที่สร้างในเดือนนี้
     const renterThisMonthQuery = `
       SELECT COUNT(*) as total
       FROM member_information
-      WHERE customer_id = ? AND status != 2 AND user_level != 'owner'
+      WHERE customer_id = ? AND status != 2 AND user_level = 'tenant'
         AND create_date >= ? AND create_date <= ?
     `;
     const [renterThisMonthResult] = await db.execute(renterThisMonthQuery, [customer_id, startOfMonth, endOfMonth]);
     const rentersThisMonth = renterThisMonthResult[0].total;
-
-    // Card 5: สมาชิกครอบครัว (Family members - ใช้แบบเดียวกับ card 2 ก่อน)
-    const familyMembersCount = totalMembers;
-    const familyMembersThisMonth = membersThisMonth;
 
     res.json({
       success: true,
@@ -359,15 +374,15 @@ export const getSummaryData = async (req, res) => {
           change: ownersThisMonth,
           change_text: ownersThisMonth > 0 ? `+${ownersThisMonth} เดือนนี้` : `0 เดือนนี้`
         },
+        total_livers: {
+          count: totalLivers,
+          change: liversThisMonth,
+          change_text: liversThisMonth > 0 ? `+${liversThisMonth} เดือนนี้` : `0 เดือนนี้`
+        },
         total_renters: {
           count: totalRenters,
           change: rentersThisMonth,
           change_text: rentersThisMonth > 0 ? `+${rentersThisMonth} เดือนนี้` : `0 เดือนนี้`
-        },
-        family_members: {
-          count: familyMembersCount,
-          change: familyMembersThisMonth,
-          change_text: familyMembersThisMonth > 0 ? `+${familyMembersThisMonth} เดือนนี้` : `0 เดือนนี้`
         }
       },
       timestamp: new Date().toISOString()
